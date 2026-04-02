@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 const port = Number(process.env.PORT || 8001);
 const rootDir = __dirname;
 const jobs = new Map();
+let eventSequence = 0;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -23,6 +24,12 @@ const MIME_TYPES = {
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.method === "POST" && req.url === "/api/assets/generate") {
+      const body = await readJson(req);
+      const assets = generateVisualAssets(body);
+      return sendJson(res, 200, { assets });
+    }
+
     if (req.method === "POST" && req.url === "/api/build/start") {
       const body = await readJson(req);
       const jobId = `job_${Date.now()}`;
@@ -32,8 +39,21 @@ const server = http.createServer(async (req, res) => {
         message: "准备开始",
         currentStep: "准备开始",
         logs: ["已收到自动搭建请求"],
+        events: [],
         buildRun: body
       };
+      appendJobEvent(job, {
+        stage: "runtime_execution",
+        kind: "insight",
+        title: "收到自动搭建请求",
+        message: "我已收到自动搭建请求，正在准备进入微页面列表并创建新页面。",
+        status: "done",
+        details: {
+          pageName: body.pageName || "",
+          goal: body.pageGoal || "",
+          backendUrl: body.backendUrl || ""
+        }
+      });
       jobs.set(jobId, job);
       runBuild(job).catch((error) => {
         const friendly = humanizeError(error.message || "");
@@ -41,14 +61,16 @@ const server = http.createServer(async (req, res) => {
         job.message = friendly.message;
         job.currentStep = "已停止";
         job.logs.push(friendly.detail);
+        appendJobEvent(job, {
+          stage: "runtime_execution",
+          kind: "warning",
+          title: "自动搭建中断",
+          message: friendly.message,
+          status: friendly.state === "blocked" ? "degraded" : "failed",
+          details: friendly.detail
+        });
       });
-      return sendJson(res, 200, {
-        jobId,
-        state: job.state,
-        message: "已开始自动搭建",
-        currentStep: job.currentStep,
-        logs: job.logs
-      });
+      return sendJson(res, 200, serializeJob(job, { jobId, message: "已开始自动搭建" }));
     }
 
     if (req.method === "GET" && req.url && req.url.startsWith("/api/build/status")) {
@@ -58,13 +80,7 @@ const server = http.createServer(async (req, res) => {
       if (!job) {
         return sendJson(res, 404, { message: "任务不存在" });
       }
-      return sendJson(res, 200, {
-        id: job.id,
-        state: job.state,
-        message: job.message,
-        currentStep: job.currentStep,
-        logs: job.logs
-      });
+      return sendJson(res, 200, serializeJob(job, { id: job.id }));
     }
 
     return serveStatic(req, res);
@@ -81,8 +97,11 @@ async function runBuild(job) {
   const { buildRun } = job;
   const actionTemplate = Array.isArray(buildRun.actionTemplate) ? buildRun.actionTemplate : [];
   const steps = [
-    ["打开编辑器", async () => {
-      await ensureBackendTab(toEditorUrl(buildRun.backendUrl));
+    ["打开微页面列表", async () => {
+      await ensureDesignListReady(buildRun.backendUrl);
+    }],
+    ["点击新建页面", async () => {
+      await clickByText("新建页面");
       await delay(2500);
       const currentUrl = await getActiveTabUrl().catch(() => "");
       if (!currentUrl.includes("/dtmall/pageDesign")) {
@@ -94,7 +113,7 @@ async function runBuild(job) {
       await waitForCondition(() => hasPlaceholder("请设置微页面名称"), 20000);
     }],
     ["填写页面名称", async () => fillByPlaceholder("请设置微页面名称", buildRun.pageName)],
-    ...buildActionSteps(actionTemplate, buildRun),
+    ...buildActionSteps(actionTemplate, buildRun, job),
     ["点击保存", async () => clickByText("保 存")]
   ];
 
@@ -102,16 +121,38 @@ async function runBuild(job) {
     job.currentStep = label;
     job.message = "正在执行";
     job.logs.push(label);
+    const event = appendJobEvent(job, {
+      stage: "runtime_execution",
+      kind: label.startsWith("补内容") || label.startsWith("添加组件") ? "action" : "insight",
+      title: label,
+      message: describeRuntimeStep(label, "running"),
+      status: "running",
+      details: getRuntimeStepDetails(label, buildRun)
+    });
     await action();
+    updateJobEvent(event, {
+      status: "done",
+      message: describeRuntimeStep(label, "done")
+    });
   }
 
   job.state = "done";
   job.message = "已完成自动搭建";
   job.currentStep = "全部完成";
   job.logs.push("自动搭建已完成");
+  appendJobEvent(job, {
+    stage: "runtime_execution",
+    kind: "result",
+    title: "自动搭建完成",
+    message: "我已完成页面搭建流程，当前页面已达到可保存/可预览状态。",
+    status: "done",
+    details: {
+      completedSteps: job.logs.filter((item) => !item.startsWith("组件诊断")).slice(-8)
+    }
+  });
 }
 
-function buildActionSteps(actionTemplate, buildRun) {
+function buildActionSteps(actionTemplate, buildRun, job) {
   return actionTemplate
     .filter((item) => item.step && !["open_list_page", "open_editor", "open_editor_direct", "set_page_name", "preview_page", "save_page"].includes(item.step))
     .map((item) => {
@@ -119,10 +160,14 @@ function buildActionSteps(actionTemplate, buildRun) {
         return [
           `添加组件：${item.target}`,
           async () => {
+            await logComponentDiagnostics(job, item.target, "点击前");
             await clickPaletteComponent(item.target);
             await delay(700);
-            const currentUrl = await getActiveTabUrl().catch(() => "");
+            const diagnostics = await getPageDiagnostics().catch(() => null);
+            logComponentDiagnosticsSnapshot(job, item.target, "点击后", diagnostics);
+            const currentUrl = diagnostics?.url || "";
             if (!currentUrl.includes("/dtmall/pageDesign")) {
+              job.logs.push(`组件跳转告警：${item.target} 已离开编辑器，当前 URL=${currentUrl || "未知页面"}`);
               throw new Error(`添加组件时页面跳转走了，当前停留在：${currentUrl || "未知页面"}`);
             }
           }
@@ -132,7 +177,7 @@ function buildActionSteps(actionTemplate, buildRun) {
       if (item.step.startsWith("fill_component_")) {
         return [
           `补内容：${item.target}`,
-          async () => runFillAction(item, buildRun)
+          async () => runFillAction(item, buildRun, job)
         ];
       }
 
@@ -143,7 +188,7 @@ function buildActionSteps(actionTemplate, buildRun) {
     });
 }
 
-async function runFillAction(item, buildRun) {
+async function runFillAction(item, buildRun, job) {
   if (item.action === "richtext_fill") {
     await fillRichText(buildRun.pageGoal);
     return;
@@ -155,7 +200,7 @@ async function runFillAction(item, buildRun) {
   }
 
   if (item.action === "material_pick") {
-    await fillBannerImage();
+    await fillBannerImage(job, buildRun.generatedAssets || []);
     return;
   }
 
@@ -165,7 +210,7 @@ async function runFillAction(item, buildRun) {
   }
 
   if (item.action === "product_pick") {
-    await fillProduct();
+    await fillProduct(job);
     return;
   }
 }
@@ -269,44 +314,222 @@ async function fillCoupon() {
   }
 }
 
-async function fillBannerImage() {
-  // 点击"添加图片"触发按钮
-  await executeBrowserScript(`
+async function fillBannerImage(job, generatedAssets = []) {
+  const log = (message) => {
+    if (job?.logs && Array.isArray(job.logs)) {
+      job.logs.push(message);
+    }
+  };
+  const targetAsset = generatedAssets.find((item) => item.componentDisplayName === "图文广告" || item.componentModule === "banner") || null;
+  if (targetAsset) {
+    log(`图文广告补图：已拿到 AI 素材 -> ${targetAsset.title} | 状态=${targetAsset.uploadStatusLabel || targetAsset.uploadStatus || "未知"} | 路径=${targetAsset.publicUrl || targetAsset.localPath || "未知"}`);
+  }
+  await logFillDiagnostics(log, "补图开始前");
+  // 只对真实的 dropdown trigger 按钮做 hover，避免误点到会外跳的分支
+  const triggerRaw = await executeBrowserScript(`
     (() => {
       const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
-      const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
-      const trigger = Array.from(document.querySelectorAll("div, span, button"))
-        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "添加 0/10 图片");
-      if (trigger) trigger.click();
-      return JSON.stringify({ ok: !!trigger });
-    })();
-  `);
-  // 等弹窗/图片管理器出现
-  await delay(1200);
-  const result = await executeBrowserScript(`
-    (() => {
-      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
-      const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
-      const image = Array.from(document.querySelectorAll("img"))
-        .find((img) => visible(img) && !/logo\\.svg|img_placeholder|ai-icon-default/.test(img.src));
-      if (!image) {
-        return JSON.stringify({ ok: false, reason: "image_not_found" });
+      const visible = (el) => {
+        const r = el.getBoundingClientRect(), s = window.getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+      };
+      const trigger = Array.from(document.querySelectorAll("button.upload-con.ant-dropdown-trigger"))
+        .find((el) => visible(el) && normalize(el.innerText || el.textContent).includes("添加"));
+      if (!trigger) {
+        return JSON.stringify({ ok: false, reason: "dropdown_trigger_not_found" });
       }
-      image.click();
-      const confirm = Array.from(document.querySelectorAll("button"))
-        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "确 定");
-      if (confirm) confirm.click();
-      const bodyText = normalize(document.body.innerText || "");
-      return JSON.stringify({ ok: true, filled: bodyText.includes("添加 1/10 图片") || bodyText.includes("添加1/10图片") });
+
+      const rect = trigger.getBoundingClientRect();
+      const mouseInit = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2
+      };
+      ["pointerenter", "mouseenter", "pointerover", "mouseover", "mousemove"].forEach((type) => {
+        trigger.dispatchEvent(new MouseEvent(type, mouseInit));
+      });
+      trigger.focus();
+
+      return JSON.stringify({
+        ok: true,
+        text: normalize(trigger.innerText || trigger.textContent).slice(0, 120),
+        mode: "hover_trigger",
+        className: trigger.className || ""
+      });
     })();
   `);
-  const parsed = parseResult(result);
-  if (!parsed.ok || !parsed.filled) {
+  const triggerParsed = parseResult(triggerRaw);
+  log(`图文广告补图：触发自定义上传 -> ${triggerParsed.ok ? `${triggerParsed.mode || "unknown"}(${triggerParsed.text || "未知文案"})` : `失败(${triggerParsed.reason || "未找到按钮"})`}`);
+  if (!triggerParsed.ok && triggerParsed.wrapperText) {
+    log(`图文广告补图：实例定位信息 -> class=${triggerParsed.wrapperClass || "unknown"} text=${triggerParsed.wrapperText}`);
+  }
+  if (!triggerParsed.ok) {
+    await logFillDiagnostics(log, "触发按钮失败后");
     throw new Error("图文广告图片未补充成功");
   }
+
+  await delay(500);
+  const uploadMenuRaw = await executeBrowserScript(`
+    (() => {
+      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+      const visible = (el) => {
+        const r = el.getBoundingClientRect(), s = window.getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+      };
+      const uploadTab = Array.from(document.querySelectorAll(".ant-dropdown-menu-item, .ant-dropdown-menu-item span"))
+        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "自定义上传");
+      if (!uploadTab) {
+        const menus = Array.from(document.querySelectorAll(".ant-dropdown-menu, .ant-dropdown-menu-item"))
+          .filter((el) => visible(el))
+          .map((el) => normalize(el.innerText || el.textContent))
+          .filter(Boolean)
+          .slice(0, 20);
+        return JSON.stringify({ ok: false, reason: "upload_menu_not_found", menus });
+      }
+      uploadTab.click();
+      return JSON.stringify({ ok: true, text: normalize(uploadTab.innerText || uploadTab.textContent) });
+    })();
+  `);
+  const uploadMenuParsed = parseResult(uploadMenuRaw);
+  log(`图文广告补图：选择菜单项 -> ${uploadMenuParsed.ok ? `已点击(${uploadMenuParsed.text || "自定义上传"})` : `失败(${uploadMenuParsed.reason || "unknown"})`}`);
+  if (!uploadMenuParsed.ok && Array.isArray(uploadMenuParsed.menus) && uploadMenuParsed.menus.length) {
+    log(`图文广告补图：当前可见下拉 -> ${uploadMenuParsed.menus.join(" | ")}`);
+  }
+  if (!uploadMenuParsed.ok) {
+    await logFillDiagnostics(log, "未找到自定义上传后");
+    throw new Error("图文广告图片未补充成功");
+  }
+
+  // 等图片管理器出现
+  await delay(1200);
+  await logFillDiagnostics(log, "触发自定义上传后");
+  const selectResult = await executeBrowserScript(`
+    (() => {
+      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+      const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
+      const modal = Array.from(document.querySelectorAll(".ant-modal"))
+        .find((el) => {
+          if (!visible(el)) return false;
+          const title = normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent);
+          return title.includes("图片管理器");
+        });
+      if (!modal) {
+        return JSON.stringify({
+          ok: false,
+          reason: "image_manager_modal_not_found",
+          imageManagerVisible: false
+        });
+      }
+      const item = Array.from(modal.querySelectorAll(".img-list-container .elx-img-list .img-item"))
+        .find((el) => visible(el));
+      if (!item) {
+        return JSON.stringify({
+          ok: false,
+          reason: "image_item_not_found",
+          imageManagerVisible: true
+        });
+      }
+      const itemTitle = normalize(item.querySelector(".title")?.innerText || item.querySelector(".title")?.textContent);
+      const image = item.querySelector("img.img");
+      item.scrollIntoView({ block: "center", inline: "center" });
+      const clickTarget = image || item;
+      if (typeof clickTarget.click === "function") {
+        clickTarget.click();
+      }
+      ["pointerdown", "mousedown", "mouseup", "click"].forEach((type) => {
+        clickTarget.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      });
+      const selected = item.classList.contains("selected") || !!item.querySelector(".selected-item, .selected-item-index");
+      return JSON.stringify({
+        ok: true,
+        imageManagerVisible: true,
+        selected: !!selected,
+        selectedTitle: itemTitle
+      });
+    })();
+  `);
+  const selectParsed = parseResult(selectResult);
+  log(`图文广告补图：素材点击结果 -> ok=${Boolean(selectParsed.ok)} reason=${selectParsed.reason || "none"} 图片管理器=${Boolean(selectParsed.imageManagerVisible)} selected=${Boolean(selectParsed.selected)} 已选素材=${selectParsed.selectedTitle || "unknown"}`);
+  if (!selectParsed.ok) {
+    await logFillDiagnostics(log, "补图失败后");
+    throw new Error("图文广告图片未补充成功");
+  }
+
+  await delay(400);
+  const confirmResult = await executeBrowserScript(`
+    (() => {
+      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+      const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
+      const modal = Array.from(document.querySelectorAll(".ant-modal"))
+        .find((el) => {
+          if (!visible(el)) return false;
+          const title = normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent);
+          return title.includes("图片管理器");
+        });
+      if (!modal) {
+        return JSON.stringify({ ok: false, reason: "image_manager_modal_not_found" });
+      }
+      const selectedItem = Array.from(modal.querySelectorAll(".img-list-container .elx-img-list .img-item"))
+        .find((el) => el.classList.contains("selected") || !!el.querySelector(".selected-item, .selected-item-index"));
+      if (!selectedItem) {
+        return JSON.stringify({ ok: false, reason: "selected_item_not_found" });
+      }
+      const confirm = modal.querySelector(".ant-modal-footer .ant-btn-primary");
+      if (!confirm) {
+        return JSON.stringify({ ok: false, reason: "confirm_not_found" });
+      }
+      confirm.click();
+      return JSON.stringify({
+        ok: true,
+        selectedTitle: normalize(selectedItem.querySelector(".title")?.innerText || selectedItem.querySelector(".title")?.textContent)
+      });
+    })();
+  `);
+  const confirmParsed = parseResult(confirmResult);
+  log(`图文广告补图：确认结果 -> ok=${Boolean(confirmParsed.ok)} reason=${confirmParsed.reason || "none"} 已确认素材=${confirmParsed.selectedTitle || "unknown"}`);
+  if (!confirmParsed.ok) {
+    await logFillDiagnostics(log, "补图失败后");
+    throw new Error("图文广告图片未补充成功");
+  }
+
+  await delay(1000);
+  const verifyResult = await executeBrowserScript(`
+    (() => {
+      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+      const bodyText = normalize(document.body.innerText || "");
+      return JSON.stringify({
+        ok: true,
+        filled: bodyText.includes("添加 1/10 图片") || bodyText.includes("添加1/10图片")
+      });
+    })();
+  `);
+  const verifyParsed = parseResult(verifyResult);
+  log(`图文广告补图：补图校验 -> filled=${Boolean(verifyParsed.filled)}`);
+  if (!verifyParsed.ok || !verifyParsed.filled) {
+    await logFillDiagnostics(log, "补图失败后");
+    throw new Error("图文广告图片未补充成功");
+  }
+  await logFillDiagnostics(log, "补图成功后");
 }
 
-async function fillProduct() {
+async function logFillDiagnostics(log, phase) {
+  const diagnostics = await getPageDiagnostics().catch(() => null);
+  if (!diagnostics) {
+    log(`图文广告补图诊断[${phase}]：页面快照获取失败`);
+    return;
+  }
+  const excerpt = diagnostics.excerpt ? ` | 摘要=${diagnostics.excerpt}` : "";
+  log(`图文广告补图诊断[${phase}]：URL=${diagnostics.url || "未知"} | 标题=${diagnostics.title || "无标题"}${excerpt}`);
+}
+
+async function fillProduct(job) {
+  const log = (message) => {
+    if (job?.logs && Array.isArray(job.logs)) {
+      job.logs.push(message);
+    }
+  };
   // 点击"添加商品"触发按钮
   await executeBrowserScript(`
     (() => {
@@ -321,37 +544,186 @@ async function fillProduct() {
   // 等弹窗出现
   await delay(1000);
   // 点击"查询"
-  await executeBrowserScript(`
+  const searchResult = await executeBrowserScript(`
     (() => {
       const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
       const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
-      const search = Array.from(document.querySelectorAll("button"))
-        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "查 询");
+      const search = Array.from(document.querySelectorAll("button, span, div"))
+        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "查询");
       if (search) search.click();
       return JSON.stringify({ ok: !!search });
     })();
   `);
-  // 等查询结果
-  await delay(1200);
-  const result = await executeBrowserScript(`
+  const searchParsed = parseResult(searchResult);
+  if (!searchParsed.ok) {
+    throw new Error("商品未补充成功：未找到查询按钮");
+  }
+  log("商品选择：已点击查询，正在等待商品列表返回。");
+  // 等查询结果真正出现，避免点得太快拿不到第一条商品
+  await waitForCondition(async () => {
+    const probe = await executeBrowserScript(`
+      (() => {
+        const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+        const visible = (el) => {
+          const r = el.getBoundingClientRect(), s = window.getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+        };
+        const modal = Array.from(document.querySelectorAll(".ant-modal"))
+          .find((el) => visible(el) && normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent).includes("商品"));
+        const scope = modal || document;
+        const row = Array.from(scope.querySelectorAll("tbody tr.ant-table-row, .ant-table-body tr.ant-table-row"))
+          .find((el) => visible(el) && normalize(el.innerText || el.textContent).length > 0);
+        return JSON.stringify({ ok: !!row });
+      })();
+    `);
+    return Boolean(parseResult(probe).ok);
+  }, 5000);
+
+  const pickResult = await executeBrowserScript(`
     (() => {
       const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
       const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
-      const row = Array.from(document.querySelectorAll("tr.ant-table-row"))
+      const modal = Array.from(document.querySelectorAll(".ant-modal"))
+        .find((el) => visible(el) && normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent).includes("商品"));
+      if (!modal) {
+        return JSON.stringify({ ok: false, reason: "modal_not_found" });
+      }
+
+      const row = Array.from(modal.querySelectorAll("tbody tr.ant-table-row, .ant-table-body tr.ant-table-row"))
         .find((el) => visible(el) && normalize(el.innerText || el.textContent).length > 0);
       if (!row) {
-        return JSON.stringify({ ok: false, reason: "row_not_found" });
+        return JSON.stringify({ ok: false, reason: "row_not_found", selected: false });
       }
-      row.click();
-      const confirm = Array.from(document.querySelectorAll("button"))
-        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "确 定");
-      if (confirm) confirm.click();
-      const bodyText = normalize(document.body.innerText || "");
-      return JSON.stringify({ ok: true, filled: bodyText.includes("添加商品（1/ 100）") || bodyText.includes("已选 1 件") || bodyText.includes("已选1件") });
+
+      const checkboxInput = row.querySelector("input[type='checkbox'], .ant-checkbox-input");
+      const checkboxBox =
+        row.querySelector(".ant-checkbox-inner")
+        || row.querySelector(".ant-checkbox")
+        || checkboxInput?.closest("label")
+        || checkboxInput?.parentElement;
+      const firstCell = row.querySelector("td");
+
+      const clickTarget = checkboxBox || checkboxInput || firstCell || row;
+      row.scrollIntoView({ block: "center", inline: "center" });
+      if (typeof clickTarget.click === "function") {
+        clickTarget.click();
+      }
+      ["pointerdown", "mousedown", "mouseup", "click"].forEach((type) => {
+        clickTarget.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      });
+
+      const selected = row.classList.contains("ant-table-row-selected")
+        || !!row.querySelector("input[type='checkbox']:checked")
+        || !!row.querySelector(".ant-checkbox-checked")
+        || normalize(modal.innerText || "").includes("已选 1")
+        || normalize(modal.innerText || "").includes("已选1");
+
+      return JSON.stringify({
+        ok: true,
+        selected,
+        productName: normalize(row.innerText || row.textContent).slice(0, 120)
+      });
     })();
   `);
-  const parsed = parseResult(result);
-  if (!parsed.ok || !parsed.filled) {
+  const pickParsed = parseResult(pickResult);
+  log(`商品选择：首条商品点击结果 -> ok=${Boolean(pickParsed.ok)} selected=${Boolean(pickParsed.selected)} 商品=${pickParsed.productName || "unknown"} reason=${pickParsed.reason || "none"}`);
+  if (!pickParsed.ok) {
+    throw new Error("商品未补充成功：未找到可选商品");
+  }
+
+  await waitForCondition(async () => {
+    const probe = await executeBrowserScript(`
+      (() => {
+        const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+        const visible = (el) => {
+          const r = el.getBoundingClientRect(), s = window.getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+        };
+        const modal = Array.from(document.querySelectorAll(".ant-modal"))
+          .find((el) => visible(el) && normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent).includes("商品"));
+        if (!modal) return JSON.stringify({ ok: false, reason: "modal_not_found" });
+        const text = normalize(modal.innerText || "");
+        const selected =
+          text.includes("已选 1 件") ||
+          text.includes("已选1件") ||
+          text.includes("已选 1") ||
+          text.includes("已选1") ||
+          !!modal.querySelector(".ant-checkbox-checked");
+        return JSON.stringify({ ok: selected, text: text.slice(0, 200) });
+      })();
+    `);
+    return Boolean(parseResult(probe).ok);
+  }, 4000);
+
+  log("商品选择：已识别到至少 1 件商品被选中，准备点击确定。");
+
+  const confirmResult = await executeBrowserScript(`
+    (() => {
+      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+      const visible = (el) => { const r = el.getBoundingClientRect(), s = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none"; };
+      const modal = Array.from(document.querySelectorAll(".ant-modal"))
+        .find((el) => visible(el) && normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent).includes("商品"));
+      if (!modal) {
+        return JSON.stringify({ ok: false, reason: "modal_not_found" });
+      }
+      const confirm = Array.from(modal.querySelectorAll("button"))
+        .find((el) => visible(el) && normalize(el.innerText || el.textContent) === "确定");
+      if (!confirm) {
+        return JSON.stringify({ ok: false, reason: "confirm_not_found" });
+      }
+      confirm.click();
+      return JSON.stringify({ ok: true });
+    })();
+  `);
+  const confirmParsed = parseResult(confirmResult);
+  if (!confirmParsed.ok) {
+    throw new Error("商品未补充成功：未找到确定按钮");
+  }
+
+  await waitForCondition(async () => {
+    const probe = await executeBrowserScript(`
+      (() => {
+        const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+        const bodyText = normalize(document.body.innerText || "");
+        const modalVisible = Array.from(document.querySelectorAll(".ant-modal"))
+          .some((el) => {
+            const r = el.getBoundingClientRect();
+            const s = window.getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none" &&
+              normalize(el.querySelector(".ant-modal-title")?.innerText || el.querySelector(".ant-modal-title")?.textContent).includes("商品");
+          });
+        const filled =
+          bodyText.includes("添加商品（1/100）") ||
+          bodyText.includes("添加商品(1/100)") ||
+          bodyText.includes("已选 1 件") ||
+          bodyText.includes("已选1件") ||
+          bodyText.includes("已选 1") ||
+          bodyText.includes("已选1");
+        return JSON.stringify({ ok: !modalVisible && filled, filled, modalVisible, bodyText: bodyText.slice(0, 220) });
+      })();
+    `);
+    return Boolean(parseResult(probe).ok);
+  }, 5000);
+
+  const verifyResult = await executeBrowserScript(`
+    (() => {
+      const normalize = (v) => (v || "").replace(/\\s+/g, " ").trim();
+      const bodyText = normalize(document.body.innerText || "");
+      return JSON.stringify({
+        ok: true,
+        filled:
+          bodyText.includes("添加商品（1/100）") ||
+          bodyText.includes("添加商品(1/100)") ||
+          bodyText.includes("已选 1 件") ||
+          bodyText.includes("已选1件") ||
+          bodyText.includes("已选 1") ||
+          bodyText.includes("已选1")
+      });
+    })();
+  `);
+  const verifyParsed = parseResult(verifyResult);
+  log(`商品选择：确认后校验 -> filled=${Boolean(verifyParsed.filled)}`);
+  if (!verifyParsed.ok || !verifyParsed.filled) {
     throw new Error("商品未补充成功");
   }
 }
@@ -381,15 +753,31 @@ function getDefaultRichText(pageGoal) {
 }
 
 async function ensureBackendTab(url) {
-  const script = [
-    'tell application "Google Chrome"',
-    "activate",
-    `tell front window to make new tab with properties {URL:${appleString(url)}}`,
-    "set active tab index of front window to (count of tabs of front window)",
-    "set index of front window to 1",
-    "end tell"
-  ];
-  await runAppleScript(script);
+  const reused = await focusChromeTab({
+    urlFragments: ["/dtmall/designPage", "/dtmall/pageDesign", "/smp/application"]
+  }).catch(() => false);
+
+  if (reused) {
+    const script = [
+      'tell application "Google Chrome"',
+      "activate",
+      `set URL of active tab of front window to ${appleString(url)}`,
+      "set index of front window to 1",
+      "end tell"
+    ];
+    await runAppleScript(script);
+  } else {
+    const script = [
+      'tell application "Google Chrome"',
+      "activate",
+      `tell front window to make new tab with properties {URL:${appleString(url)}}`,
+      "set active tab index of front window to (count of tabs of front window)",
+      "set index of front window to 1",
+      "end tell"
+    ];
+    await runAppleScript(script);
+  }
+
   await delay(3000);
 }
 
@@ -673,6 +1061,41 @@ async function executeBrowserScript(js) {
   return runAppleScript(script);
 }
 
+async function getPageDiagnostics() {
+  const result = await executeBrowserScript(`
+    (() => {
+      const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+      const bodyText = normalize(document.body?.innerText || "");
+      const excerpt = bodyText.slice(0, 200);
+      return JSON.stringify({
+        ok: true,
+        url: window.location.href,
+        title: document.title || "",
+        excerpt
+      });
+    })();
+  `);
+  const parsed = parseResult(result);
+  return parsed.ok ? parsed : null;
+}
+
+async function logComponentDiagnostics(job, componentName, phase) {
+  const diagnostics = await getPageDiagnostics().catch(() => null);
+  logComponentDiagnosticsSnapshot(job, componentName, phase, diagnostics);
+}
+
+function logComponentDiagnosticsSnapshot(job, componentName, phase, diagnostics) {
+  if (!job) return;
+  if (!diagnostics) {
+    job.logs.push(`组件诊断[${componentName}][${phase}]：页面快照获取失败`);
+    return;
+  }
+  const excerpt = diagnostics.excerpt ? ` | 摘要=${diagnostics.excerpt}` : "";
+  job.logs.push(
+    `组件诊断[${componentName}][${phase}]：URL=${diagnostics.url || "未知"} | 标题=${diagnostics.title || "无标题"}${excerpt}`
+  );
+}
+
 async function getActiveTabUrl() {
   const script = [
     'tell application "Google Chrome"',
@@ -748,8 +1171,246 @@ function parseResult(raw) {
   }
 }
 
+function serializeJob(job, extra = {}) {
+  return {
+    ...extra,
+    state: job.state,
+    message: extra.message || job.message,
+    currentStep: job.currentStep,
+    logs: job.logs,
+    events: job.events || []
+  };
+}
+
+function appendJobEvent(job, event) {
+  const nextEvent = {
+    id: `evt_${Date.now()}_${eventSequence += 1}`,
+    timestamp: new Date().toISOString(),
+    stage: event.stage || "runtime_execution",
+    title: event.title || "未命名动作",
+    message: event.message || "",
+    status: event.status || "pending",
+    kind: event.kind || "action",
+    details: event.details ?? null
+  };
+  job.events.push(nextEvent);
+  return nextEvent;
+}
+
+function updateJobEvent(event, patch) {
+  if (!event) return;
+  Object.assign(event, patch, { updatedAt: new Date().toISOString() });
+}
+
+function describeRuntimeStep(label, phase) {
+  const done = phase === "done";
+
+  if (label === "打开微页面列表") {
+    return done ? "我已进入微页面列表页，接下来准备发起新建页面。" : "我正在打开微页面列表，并确认当前后台入口可用。";
+  }
+
+  if (label === "点击新建页面") {
+    return done ? "我已点击“新建页面”，正在切换到微页面编辑器。" : "我正在点击“新建页面”，准备进入编辑器。";
+  }
+
+  if (label === "等待进入编辑页") {
+    return done ? "我已识别到编辑器里的关键输入区域，可以开始填写页面信息。" : "我正在等待编辑器加载完成，并识别页面名称等关键输入框。";
+  }
+
+  if (label === "填写页面名称") {
+    return done ? "我已填写页面名称，接下来开始逐个添加页面模块。" : "我正在填写页面名称，并准备初始化页面骨架。";
+  }
+
+  if (label.startsWith("添加组件：")) {
+    const componentName = label.replace("添加组件：", "").trim();
+    return done ? `我已完成组件“${componentName}”的添加，页面里已经出现对应模块。` : `我正在把组件“${componentName}”加入页面。`;
+  }
+
+  if (label.startsWith("补内容：")) {
+    const target = label.replace("补内容：", "").trim();
+    return done ? `我已补齐“${target}”的默认内容，当前模块已具备可预览信息。` : `我正在补齐“${target}”的默认内容。`;
+  }
+
+  if (label === "点击保存") {
+    return done ? "我已完成保存动作，这轮自动搭建流程结束。" : "我正在执行保存操作，并准备汇总本次执行结果。";
+  }
+
+  return done ? `我已完成：${label}` : `我正在执行：${label}`;
+}
+
+function getRuntimeStepDetails(label, buildRun) {
+  if (label === "打开微页面列表") {
+    return { backendUrl: buildRun.backendUrl || "" };
+  }
+
+  if (label === "填写页面名称") {
+    return { pageName: buildRun.pageName || "" };
+  }
+
+  if (label.startsWith("添加组件：")) {
+    return { component: label.replace("添加组件：", "").trim() };
+  }
+
+  if (label.startsWith("补内容：")) {
+    const target = label.replace("补内容：", "").trim();
+    const template = (buildRun.actionTemplate || []).find((item) => item.target === target && Array.isArray(item.detail));
+    return template?.detail || { target };
+  }
+
+  return null;
+}
+
 function appleString(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function generateVisualAssets(payload) {
+  const parsed = payload?.parsed || {};
+  const componentPlan = Array.isArray(payload?.componentPlan) ? payload.componentPlan : [];
+  const referenceAnalysis = payload?.referenceAnalysis || parsed.reference_analysis || null;
+  const visualComponents = componentPlan.filter((item) => isVisualComponent(item));
+
+  if (!visualComponents.length) {
+    return [];
+  }
+
+  const outputDir = path.join(rootDir, "assets", "generated");
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  return visualComponents.map((component, index) => {
+    const asset = buildGeneratedAsset({
+      component,
+      index,
+      parsed,
+      referenceAnalysis,
+      outputDir
+    });
+
+    fs.writeFileSync(asset.localPath, asset.svg, "utf8");
+
+    return {
+      id: asset.id,
+      title: asset.title,
+      componentModule: asset.componentModule,
+      componentDisplayName: asset.componentDisplayName,
+      prompt: asset.prompt,
+      promptSummary: asset.promptSummary,
+      publicUrl: asset.publicUrl,
+      localPath: asset.localPath,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+      uploadStatus: "pending_material_upload",
+      uploadStatusLabel: "待上传到素材库",
+      integrationHint: "接入素材上传 API 或自动上传链路后，可自动带入微页面图片组件。"
+    };
+  });
+}
+
+function isVisualComponent(component) {
+  return component?.displayName === "图文广告" || component?.component === "banner";
+}
+
+function buildGeneratedAsset({ component, index, parsed, referenceAnalysis, outputDir }) {
+  const palette = resolveAssetPalette(parsed, referenceAnalysis);
+  const dimensions = getAssetDimensions(component);
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const fileName = `${timestamp}-${component.component || component.module || "visual"}-${index + 1}.svg`;
+  const title = `${component.displayName}-${parsed.page_goal || "页面"}-${index + 1}`;
+  const prompt = [
+    `为微页面组件“${component.displayName}”生成一张可直接带入页面的主视觉图。`,
+    `页面目标：${parsed.page_goal || "卖货转化"}`,
+    `页面风格：${parsed.style || "品牌感"}`,
+    `主题色策略：${parsed.theme_color_label || "使用页面主题色"}`,
+    `需求摘要：${parsed.raw_demand || "未提供额外说明"}`,
+    referenceAnalysis?.hints?.style ? `参考图风格线索：${referenceAnalysis.hints.style}` : "",
+    referenceAnalysis?.hints?.paletteSummary ? `参考图配色：${referenceAnalysis.hints.paletteSummary}` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const promptSummary = `${parsed.style || "品牌感"}风格视觉，围绕${parsed.page_goal || "页面转化"}生成`;
+  const svg = renderGeneratedAssetSvg({
+    title,
+    componentDisplayName: component.displayName,
+    goal: parsed.page_goal || "卖货转化",
+    style: parsed.style || "品牌感",
+    demand: parsed.raw_demand || "自动生成的页面视觉素材",
+    palette,
+    width: dimensions.width,
+    height: dimensions.height
+  });
+
+  return {
+    id: `asset_${timestamp}_${index + 1}`,
+    title,
+    componentModule: component.module,
+    componentDisplayName: component.displayName,
+    prompt,
+    promptSummary,
+    palette,
+    width: dimensions.width,
+    height: dimensions.height,
+    localPath: path.join(outputDir, fileName),
+    publicUrl: `/assets/generated/${fileName}`,
+    svg
+  };
+}
+
+function resolveAssetPalette(parsed, referenceAnalysis) {
+  const referencePalette = Array.isArray(referenceAnalysis?.palette) ? referenceAnalysis.palette : [];
+  const fallbackPalette = ["#8C4B2F", "#F0D2BE", "#F8F4EE"];
+  const customColor = parsed?.theme_color_mode === "custom" && parsed?.theme_color_value ? [parsed.theme_color_value] : [];
+  return [...new Set([...customColor, ...referencePalette, ...fallbackPalette])].slice(0, 3);
+}
+
+function getAssetDimensions(component) {
+  if (component?.displayName === "图文广告" || component?.component === "banner") {
+    return { width: 1125, height: 720 };
+  }
+  return { width: 1080, height: 1080 };
+}
+
+function renderGeneratedAssetSvg({ title, componentDisplayName, goal, style, demand, palette, width, height }) {
+  const [primary, secondary, surface] = palette;
+  const safeTitle = escapeXml(title);
+  const safeComponentName = escapeXml(componentDisplayName);
+  const safeGoal = escapeXml(goal);
+  const safeStyle = escapeXml(style);
+  const safeDemand = escapeXml(demand.slice(0, 42));
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${escapeXml(surface)}"/>
+      <stop offset="100%" stop-color="${escapeXml(primary)}"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${escapeXml(secondary)}" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.88"/>
+    </linearGradient>
+  </defs>
+  <rect width="${width}" height="${height}" rx="38" fill="url(#bg)"/>
+  <circle cx="${Math.round(width * 0.83)}" cy="${Math.round(height * 0.22)}" r="${Math.round(height * 0.2)}" fill="${escapeXml(secondary)}" fill-opacity="0.42"/>
+  <circle cx="${Math.round(width * 0.2)}" cy="${Math.round(height * 0.72)}" r="${Math.round(height * 0.14)}" fill="#ffffff" fill-opacity="0.28"/>
+  <rect x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.12)}" width="${Math.round(width * 0.84)}" height="${Math.round(height * 0.76)}" rx="32" fill="url(#card)"/>
+  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.24)}" fill="#5a3420" font-family="'Noto Serif SC','PingFang SC','Microsoft YaHei',serif" font-size="${Math.round(width * 0.038)}" font-weight="700">${safeComponentName}</text>
+  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.38)}" fill="#2f1f17" font-family="'Noto Serif SC','PingFang SC','Microsoft YaHei',serif" font-size="${Math.round(width * 0.072)}" font-weight="700">${safeGoal}</text>
+  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.5)}" fill="#74462b" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.026)}" font-weight="700">${safeStyle} · AI Generated Visual</text>
+  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.61)}" fill="#6d5547" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.023)}">${safeDemand}</text>
+  <rect x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.68)}" width="${Math.round(width * 0.26)}" height="${Math.round(height * 0.11)}" rx="${Math.round(height * 0.05)}" fill="#5a3420"/>
+  <text x="${Math.round(width * 0.18)}" y="${Math.round(height * 0.75)}" fill="#fff9f2" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.024)}" font-weight="800">立即查看</text>
+  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.86)}" fill="#8b6f5d" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.018)}">${safeTitle}</text>
+</svg>`;
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 function readJson(req) {

@@ -1,6 +1,7 @@
 import { COMPONENT_DICTIONARY, PAGE_TEMPLATES, MODULE_LIBRARY } from "../rules.js";
 
-export function parseInput({ demand, industry, goal, style, referenceFile, referenceAnalysis }) {
+export function parseInput({ demand, industry, goal, style, themeColorMode, customThemeColor, referenceFile, referenceAnalysis }) {
+  // AI candidate: 这里当前靠关键词和参考图提示做意图理解，最适合替换成 LLM 的结构化解析。
   const text = demand.trim();
   const token = text.toLowerCase();
   const referenceToken = [referenceFile?.name, ...(referenceAnalysis?.hints?.reasons || [])].join(" ").toLowerCase();
@@ -36,6 +37,9 @@ export function parseInput({ demand, industry, goal, style, referenceFile, refer
     page_goal: inferredGoal,
     industry: inferredIndustry,
     style: inferredStyle,
+    theme_color_mode: themeColorMode || "page",
+    theme_color_value: themeColorMode === "custom" ? (customThemeColor || "#8c4b2f").toUpperCase() : null,
+    theme_color_label: themeColorMode === "custom" ? `自定义颜色 ${String(customThemeColor || "#8c4b2f").toUpperCase()}` : "使用页面主题色",
     reference_image: referenceFile?.name || null,
     reference_analysis: referenceAnalysis || null,
     modules,
@@ -72,6 +76,7 @@ export function planPage(parsed, template) {
 }
 
 export function mapComponents(pageStructure) {
+  // Keep rule-based: 组件映射更像配置表问题，规则通常比模型更稳定、可控。
   return pageStructure.map((block) => {
     const rule = COMPONENT_DICTIONARY[block.type];
     if (!rule) {
@@ -116,6 +121,7 @@ export function buildDraft(parsed) {
 }
 
 function detectModules(token, inferredGoal, referenceAnalysis) {
+  // AI candidate: 模块规划目前是启发式规则，适合升级为 LLM 决定模块组合、顺序和侧重点。
   // 按固定顺序声明候选，保证结构可预测
   const hasCoupon = token.includes("券") || token.includes("满减");
   const hasCountdown = token.includes("倒计时") || token.includes("限时");
@@ -164,6 +170,7 @@ function detectModules(token, inferredGoal, referenceAnalysis) {
 }
 
 function reorderByReference(pageStructure, referenceAnalysis) {
+  // AI candidate: 这里当前只按参考图分区做简单重排，后续可让模型按视觉重心生成更自然的布局顺序。
   const zoneModules = referenceAnalysis?.hints?.zoneModules;
   if (!zoneModules || zoneModules.length === 0) return pageStructure;
 

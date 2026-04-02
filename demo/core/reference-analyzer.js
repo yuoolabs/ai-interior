@@ -1,6 +1,7 @@
 const MAX_SIDE = 160;
 
 export async function analyzeReferenceImage(file) {
+  // Best for multimodal: 这里是最适合替换成视觉/多模态模型的入口。
   if (!file) return null;
 
   const dataUrl = await readAsDataUrl(file);
@@ -46,6 +47,7 @@ function loadImage(src) {
 }
 
 function samplePixels(image) {
+  // Keep rule-based for fallback: 本地像素采样适合作为无模型时的轻量兜底方案。
   const scale = Math.min(1, MAX_SIDE / Math.max(image.width, image.height));
   const width = Math.max(24, Math.round(image.width * scale));
   const height = Math.max(24, Math.round(image.height * scale));
@@ -105,6 +107,7 @@ function pickPalette(pixels) {
 }
 
 function detectSections(pixels, width, height) {
+  // AI candidate: 当前按亮度/饱和度切分区块，后续可改成模型直接理解版式结构。
   const rowSignals = [];
   for (let y = 0; y < height; y += 1) {
     let rowBrightness = 0;
@@ -149,6 +152,7 @@ function detectSections(pixels, width, height) {
 }
 
 function detectLayoutZones({ pixels, width, height, sections, stats }) {
+  // Best for multimodal: 区域角色判断很依赖视觉语义，模型会比规则更准确。
   const zones = [];
   const getSectionStats = (section) => {
     const yStart = Math.max(0, Math.floor(section.from * height));
@@ -228,6 +232,7 @@ function detectLayoutZones({ pixels, width, height, sections, stats }) {
 }
 
 function buildHints({ file, width, height, palette, stats, sections, layoutZones }) {
+  // AI candidate: 这里负责把图像统计翻译成“风格/目标/模块建议”，非常适合交给模型生成。
   const fileToken = file.name.toLowerCase();
   const modules = ["banner", "benefit_bar", "cta"];
   const reasons = [];

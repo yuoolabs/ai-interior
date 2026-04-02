@@ -1,4 +1,5 @@
 export function validateResult({ pageStructure, componentPlan, parsed }) {
+  // Keep rule-based: 校验逻辑更适合继续保持显式规则，结果稳定、便于解释和回归测试。
   const structureTypes = pageStructure.map((item) => item.type);
   const missingCore = [];
   const requiredModulesByGoal = {
@@ -37,6 +38,7 @@ export function validateResult({ pageStructure, componentPlan, parsed }) {
 }
 
 export function validateRuntimeDraft(runtimeDraft) {
+  // Keep rule-based: 运行时空模块检查属于确定性约束，不建议优先换成 AI。
   const emptyModules = [];
   const widgets = runtimeDraft?.widgets || [];
 
@@ -69,6 +71,7 @@ export function validateRuntimeDraft(runtimeDraft) {
 }
 
 export function explainDiff(componentPlan) {
+  // Optional AI assist: 差异说明可由模型润色，但底层判断最好仍基于规则结果。
   return {
     completed: componentPlan.filter((item) => item.status === "direct").map((item) => item.module),
     replaced: componentPlan

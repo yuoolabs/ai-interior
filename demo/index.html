@@ -5,155 +5,200 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>微页面智能搭建助手 Demo</title>
   <link rel="icon" href="data:," />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <main class="app">
-    <header class="hero">
-      <h1>微页面智能搭建助手</h1>
-      <p>输入需求，自动生成可用初稿（结构 + 组件映射 + 搭建执行 + 校验结果）</p>
-    </header>
-
-    <section class="panel">
-      <h2>1. 输入需求</h2>
-      <form id="briefForm" class="form-grid">
-        <label>
-          页面需求（必填）
-          <textarea id="demand" rows="4" placeholder="例如：做一个母婴大促卖货页，突出满减和爆款商品" required></textarea>
-        </label>
-
-        <label>
-          行业
-          <select id="industry">
-            <option value="">自动识别</option>
-            <option value="母婴">母婴</option>
-            <option value="美妆">美妆</option>
-            <option value="食品">食品</option>
-            <option value="服饰">服饰</option>
-            <option value="通用">通用</option>
-          </select>
-        </label>
-
-        <label>
-          目标
-          <select id="goal">
-            <option value="">自动识别</option>
-            <option value="卖货转化">卖货转化</option>
-            <option value="活动推广">活动推广</option>
-            <option value="会员拉新">会员拉新</option>
-          </select>
-        </label>
-
-        <label>
-          风格
-          <select id="style">
-            <option value="">自动识别</option>
-            <option value="大促">大促</option>
-            <option value="清新">清新</option>
-            <option value="品牌感">品牌感</option>
-          </select>
-        </label>
-
-        <label>
-          参考图（可选，Demo 会自动分析）
-          <input id="reference" type="file" accept="image/*" />
-        </label>
-
-        <button type="submit" class="primary">生成页面初稿</button>
-      </form>
-
-      <div class="inline-build-action">
-        <button id="startBuildButton" class="secondary" type="button" disabled>开始自动搭建到后台</button>
-      </div>
-
-      <div class="reference-panel" id="referencePanel" hidden>
-        <div class="reference-preview">
-          <img id="referencePreview" alt="参考图预览" />
+  <div class="page-shell">
+    <div class="page-noise" aria-hidden="true"></div>
+    <main class="app">
+      <section class="hero">
+        <div class="hero-copy">
+          <h1>微页面智能搭建助手</h1>
+          <p class="hero-text">
+            基于自然语言或参考图，使用 AI 自动生成装修页面初稿，实现从设计到上线的闭环。
+          </p>
         </div>
-        <div class="reference-meta">
-          <h3>参考图判断</h3>
-          <div id="referenceSummary"></div>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="panel" id="resultPanel" hidden>
-      <h2>2. 结果总览</h2>
-      <div class="summary" id="summary"></div>
-    </section>
+      <section class="workspace">
+        <section class="input-stage panel panel-form">
+          <div class="section-head">
+            <p class="section-index">01</p>
+            <div>
+              <h2>输入需求</h2>
+            </div>
+          </div>
 
-    <section class="panel" id="buildPanel" hidden>
-      <h3>3. 自动搭建状态</h3>
-      <div class="build-status" id="buildStatus"></div>
-      <div class="build-grid">
-        <div>
-          <h4>本次搭建信息</h4>
-          <ul id="buildMeta"></ul>
-        </div>
-        <div>
-          <h4>接下来会做</h4>
-          <ol id="buildSteps"></ol>
-        </div>
-      </div>
-      <pre id="buildPayload"></pre>
-    </section>
+          <form id="briefForm" class="form-grid">
+            <label class="field field-large">
+              <span class="field-label">页面需求</span>
+              <textarea id="demand" rows="5" placeholder="例如：做一个母婴大促卖货页，突出满减和爆款商品" required></textarea>
+            </label>
 
-    <section class="grid-2" id="details" hidden>
-      <article class="panel">
-        <h3>页面结构</h3>
-        <ol id="structureList"></ol>
-      </article>
-      <article class="panel">
-        <h3>组件映射</h3>
-        <ul id="mappingList"></ul>
-      </article>
-      <article class="panel">
-        <h3>执行记录（模拟 MCP）</h3>
-        <ol id="executionList"></ol>
-      </article>
-      <article class="panel">
-        <h3>校验与差异说明</h3>
-        <div id="validation"></div>
-      </article>
-    </section>
+            <label class="field">
+              <span class="field-label">行业</span>
+              <select id="industry">
+                <option value="">自动识别</option>
+                <option value="主播">主播</option>
+                <option value="母婴">母婴</option>
+                <option value="美妆">美妆</option>
+                <option value="食品">食品</option>
+                <option value="服饰">服饰</option>
+                <option value="通用">通用</option>
+              </select>
+            </label>
 
-    <section class="grid-2" id="taskPanel" hidden>
-      <article class="panel">
-        <h3>任务拆解</h3>
-        <ol id="taskList"></ol>
-      </article>
-      <article class="panel">
-        <h3>MCP 执行脚本</h3>
-        <pre id="mcpOutput"></pre>
-      </article>
-    </section>
+            <label class="field">
+              <span class="field-label">目标</span>
+              <select id="goal">
+                <option value="">自动识别</option>
+                <option value="卖货转化">卖货转化</option>
+                <option value="活动推广">活动推广</option>
+                <option value="会员拉新">会员拉新</option>
+              </select>
+            </label>
 
-    <section class="grid-2" id="runtimePanel" hidden>
-      <article class="panel">
-        <h3>真实动作锚点</h3>
-        <pre id="selectorOutput"></pre>
-      </article>
-      <article class="panel">
-        <h3>动作模板</h3>
-        <pre id="actionOutput"></pre>
-      </article>
-    </section>
+            <label class="field">
+              <span class="field-label">风格</span>
+              <select id="style">
+                <option value="">自动识别</option>
+                <option value="大促">大促</option>
+                <option value="清新">清新</option>
+                <option value="品牌感">品牌感</option>
+              </select>
+            </label>
 
-    <section class="panel" id="bootstrapPanel" hidden>
-      <h3>首条真实执行链（4 步）</h3>
-      <pre id="bootstrapOutput"></pre>
-    </section>
+            <div class="field">
+              <span class="field-label">页面主题色</span>
+              <div class="theme-mode-group" role="radiogroup" aria-label="页面主题色">
+                <label class="theme-mode-option">
+                  <input type="radio" name="themeColorMode" value="page" checked />
+                  <span>使用小程序主题色</span>
+                </label>
+                <label class="theme-mode-option">
+                  <input type="radio" name="themeColorMode" value="custom" />
+                  <span>自定义颜色</span>
+                </label>
+              </div>
+              <div class="theme-color-picker" id="themeColorPicker" hidden>
+                <input id="customThemeColor" type="color" value="#8c4b2f" />
+                <span id="customThemeColorValue">#8C4B2F</span>
+              </div>
+            </div>
 
-    <section class="panel" id="savePanel" hidden>
-      <h3>保存前检查</h3>
-      <pre id="saveOutput"></pre>
-    </section>
+            <label class="field">
+              <span class="field-label">参考图</span>
+              <div class="file-upload">
+                <input id="reference" class="file-input" type="file" accept="image/*" />
+                <label for="reference" class="file-upload-button">上传参考图</label>
+                <span id="referenceFileName" class="file-upload-name">未选择文件</span>
+              </div>
+            </label>
 
-    <section class="panel" id="jsonPanel" hidden>
-      <h3>结构化输出（给研发）</h3>
-      <pre id="jsonOutput"></pre>
-    </section>
-  </main>
+            <div class="form-actions">
+              <button type="submit" form="briefForm" class="primary hero-primary">生成页面初稿</button>
+              <button id="startBuildButton" class="secondary hero-secondary" type="button" disabled>自动搭建到微页面</button>
+            </div>
+          </form>
+
+        </section>
+
+        <section class="output-stage">
+          <section class="panel ai-panel" id="aiPanel">
+            <div class="section-head compact">
+              <p class="section-index">AI</p>
+              <div>
+                <h3>AI 助手面板</h3>
+                <p>AI 会在这里逐步汇报自己的理解、规划、执行动作和最终结果。</p>
+              </div>
+            </div>
+            <div id="aiFeed" class="ai-feed empty-ready-block" data-empty="上传参考图或生成页面初稿后，AI 会在这里展示分析过程与执行动作"></div>
+            <details class="raw-details" id="aiRawDetails" hidden>
+              <summary>查看原始细节</summary>
+              <pre id="aiRawOutput"></pre>
+            </details>
+          </section>
+
+          <section class="panel" id="referencePanel" hidden>
+            <div class="section-head compact">
+              <p class="section-index">REF</p>
+              <div>
+                <h3>AI 参考图判断</h3>
+                <p>自动提取配色、风格线索与可复用模块。</p>
+              </div>
+            </div>
+            <div id="referenceSummary" class="reference-summary"></div>
+          </section>
+
+          <section class="panel result-panel" id="resultPanel" hidden>
+            <div class="section-head">
+              <p class="section-index">02</p>
+              <div>
+                <h2>AI 最终结论</h2>
+                <p>AI 综合需求、参考图与真实规则后给出的页面判断。</p>
+              </div>
+            </div>
+            <div class="summary" id="summary"></div>
+          </section>
+
+          <section class="panel" id="assetPanel" hidden>
+            <div class="section-head compact">
+              <p class="section-index">VIS</p>
+              <div>
+                <h3>AI 生成素材</h3>
+                <p>命中图片组件时，AI 会先准备可带入页面的视觉素材，并把素材信息接入执行计划。</p>
+              </div>
+            </div>
+            <div id="assetList" class="asset-grid empty-ready-block" data-empty="命中图片组件后，AI 会在这里生成待带入的视觉素材"></div>
+          </section>
+
+          <section class="panel build-panel" id="buildPanel" hidden>
+            <div class="section-head">
+              <p class="section-index">03</p>
+              <div>
+                <h3>AI 执行结果总结</h3>
+                <p>执行中回放 AI 动作，执行后沉淀摘要结论与原始细节。</p>
+              </div>
+            </div>
+            <div class="execution-summary" id="buildSummary"></div>
+            <div class="build-status" id="buildStatus"></div>
+            <div class="build-grid">
+              <div class="subpanel">
+                <h4>本次执行信息</h4>
+                <ul id="buildMeta"></ul>
+              </div>
+              <div class="subpanel">
+                <h4>AI 执行计划</h4>
+                <ol id="buildSteps"></ol>
+              </div>
+            </div>
+            <details class="raw-details" id="buildRawDetails">
+              <summary>查看原始执行细节</summary>
+              <pre id="buildRawOutput"></pre>
+            </details>
+          </section>
+
+          <section class="grid-2" id="details" hidden>
+            <article class="panel">
+              <h3>AI 规划的页面结构</h3>
+              <ol id="structureList" class="empty-ready-list" data-empty="生成页面初稿后，这里会展示页面模块结构"></ol>
+            </article>
+            <article class="panel">
+              <h3>AI 选择的组件方案</h3>
+              <ul id="mappingList" class="empty-ready-list" data-empty="生成页面初稿后，这里会展示真实组件映射关系"></ul>
+            </article>
+            <article class="panel">
+              <h3>AI 风险判断与替代建议</h3>
+              <div id="validation" class="empty-ready-block" data-empty="生成页面初稿后，这里会展示校验结果与差异说明"></div>
+            </article>
+          </section>
+        </section>
+      </section>
+    </main>
+  </div>
 
   <script type="module" src="./main.js"></script>
 </body>

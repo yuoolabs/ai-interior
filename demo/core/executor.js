@@ -1,11 +1,14 @@
 import { buildBootstrapRun } from "./bootstrap-run.js";
 
-export function buildExecutionPlan(componentPlan, parsed) {
+export function buildExecutionPlan(componentPlan, parsed, generatedAssets = []) {
+  // AI candidate: 执行计划现在是固定模板拼装，后续可让 LLM 按页面方案动态生成更灵活的动作链。
   const pageName = `${parsed.industry}-${parsed.page_goal}-${new Date().toISOString().slice(0, 10)}`;
   const designListUrl = "https://smp.iyouke.com/dtmall/designPage";
   const directEditorUrl = "https://smp.iyouke.com/dtmall/pageDesign?newPage=true&platformType=1";
+  const assetPlan = summarizeGeneratedAssets(generatedAssets);
 
   const steps = [
+    ...assetPlan.map((item) => `准备 AI 素材：${item.componentDisplayName} -> ${item.title}`),
     `先打开 ${designListUrl}`,
     "点击“新建页面”进入编辑器",
     `填写页面名称：${pageName}`,
@@ -15,14 +18,15 @@ export function buildExecutionPlan(componentPlan, parsed) {
   ];
 
   const mcpScript = [
-    "1. navigate_page -> designPage",
-    "2. click -> 新建页面",
-    `3. fill -> 页面名称 = ${pageName}`,
+    ...assetPlan.map((item, index) => `${index + 1}. prepare ai_asset -> ${item.componentDisplayName}(${item.title})`),
+    `${assetPlan.length + 1}. navigate_page -> designPage`,
+    `${assetPlan.length + 2}. click -> 新建页面`,
+    `${assetPlan.length + 3}. fill -> 页面名称 = ${pageName}`,
     ...componentPlan.map((item, index) =>
-      `${index + 4}. add component -> ${item.displayName}(${item.component})`
+      `${index + assetPlan.length + 4}. add component -> ${item.displayName}(${item.component})`
     ),
-    `${componentPlan.length + 4}. click -> 保存`,
-    `${componentPlan.length + 5}. click -> 预览`
+    `${componentPlan.length + assetPlan.length + 4}. click -> 保存`,
+    `${componentPlan.length + assetPlan.length + 5}. click -> 预览`
   ];
 
   const runtimeSelectors = {
@@ -74,7 +78,7 @@ export function buildExecutionPlan(componentPlan, parsed) {
         target: item.displayName,
         expect: `画布出现 ${index + 2}·${item.displayName}`
       },
-      ...buildContentActions(item, index)
+      ...buildContentActions(item, index, generatedAssets)
     ]),
     {
       step: "save_page",
@@ -92,7 +96,9 @@ export function buildExecutionPlan(componentPlan, parsed) {
     {
       module: "图文广告",
       check: "确认“添加图片”数量不是 0/10",
-      result: "已验证可从图片管理器直接选现有素材"
+      result: assetPlan.length
+        ? "已准备 AI 生成素材，可接入素材上传链路后自动带入"
+        : "已验证可从图片管理器直接选现有素材"
     },
     {
       module: "优惠券",
@@ -119,11 +125,13 @@ export function buildExecutionPlan(componentPlan, parsed) {
     runtimeSelectors,
     actionTemplate,
     bootstrapRun: buildBootstrapRun(pageName, designListUrl),
-    saveChecklist
+    saveChecklist,
+    generatedAssets: assetPlan
   };
 }
 
 function buildComponentSteps(item, index) {
+  // AI candidate: 这里可以让模型按模块意图补足更自然的执行描述和内容策略。
   const prefix = `添加第${index + 1}个模块`;
   const steps = [
     `${prefix}：${item.module} -> ${item.displayName}(${item.component})`,
@@ -155,17 +163,20 @@ function buildContentStep(item) {
   return null;
 }
 
-function buildContentActions(item, index) {
+function buildContentActions(item, index, generatedAssets = []) {
+  // Keep rule-based with optional AI assist: 真实后台动作最好保留规则，AI 更适合补 detail 文案或兜底说明。
   if (item.displayName === "图文广告") {
+    const asset = pickGeneratedAsset(generatedAssets, item);
     return [
       {
         step: `fill_component_${index + 1}`,
         action: "material_pick",
         target: "图文广告",
+        asset,
         detail: [
-          "点击“添加图片”",
-          "选择“自定义上传”",
-          "在图片管理器中点击一张现有图片",
+          asset ? `优先使用 AI 素材：${asset.title}` : "点击“添加图片”",
+          asset ? `素材状态：${asset.uploadStatusLabel}` : "选择“自定义上传”",
+          asset ? "如素材已入库，则按素材名精确选择；否则先走现有图片兜底" : "在图片管理器中点击一张现有图片",
           "点击“确定”",
           "校验按钮文案变为“添加 1/10 图片”"
         ]
@@ -239,4 +250,27 @@ function buildContentActions(item, index) {
   }
 
   return [];
+}
+
+function summarizeGeneratedAssets(generatedAssets) {
+  return generatedAssets.map((item) => ({
+    id: item.id,
+    title: item.title,
+    componentModule: item.componentModule,
+    componentDisplayName: item.componentDisplayName,
+    prompt: item.prompt,
+    promptSummary: item.promptSummary,
+    localPath: item.localPath,
+    publicUrl: item.publicUrl,
+    uploadStatus: item.uploadStatus,
+    uploadStatusLabel: item.uploadStatusLabel
+  }));
+}
+
+function pickGeneratedAsset(generatedAssets, item) {
+  return generatedAssets.find(
+    (asset) =>
+      asset.componentDisplayName === item.displayName ||
+      asset.componentModule === item.module
+  ) || null;
 }
