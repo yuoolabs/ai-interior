@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="960" viewBox="0 0 480 960">
+  <rect width="480" height="960" fill="#fff7ef"/>
+  <rect x="0" y="0" width="480" height="280" rx="0" fill="#ff6b35"/>
+  <text x="40" y="110" fill="#ffffff" font-size="44" font-family="Arial, sans-serif" font-weight="700">春季大促</text>
+  <text x="40" y="170" fill="#fff2e7" font-size="26" font-family="Arial, sans-serif">爆款直降 满100减10</text>
+  <rect x="24" y="316" width="432" height="88" rx="18" fill="#ffffff" stroke="#ffd4bf"/>
+  <text x="48" y="370" fill="#8a2f0a" font-size="28" font-family="Arial, sans-serif">限时加赠 / 优惠券 / 包邮</text>
+  <rect x="24" y="436" width="432" height="106" rx="24" fill="#fff1ec" stroke="#ffcab7"/>
+  <text x="42" y="500" fill="#c2410c" font-size="30" font-family="Arial, sans-serif" font-weight="700">倒计时 08:12:56</text>
+  <rect x="24" y="574" width="206" height="220" rx="24" fill="#ffffff" stroke="#ffe1d4"/>
+  <rect x="250" y="574" width="206" height="220" rx="24" fill="#ffffff" stroke="#ffe1d4"/>
+  <rect x="44" y="594" width="166" height="110" rx="18" fill="#ffd8c2"/>
+  <rect x="270" y="594" width="166" height="110" rx="18" fill="#ffd8c2"/>
+  <text x="44" y="736" fill="#8a2f0a" font-size="26" font-family="Arial, sans-serif">爆款商品 A</text>
+  <text x="270" y="736" fill="#8a2f0a" font-size="26" font-family="Arial, sans-serif">爆款商品 B</text>
+  <text x="44" y="772" fill="#ef4444" font-size="34" font-family="Arial, sans-serif" font-weight="700">¥59</text>
+  <text x="270" y="772" fill="#ef4444" font-size="34" font-family="Arial, sans-serif" font-weight="700">¥79</text>
+  <rect x="24" y="832" width="432" height="88" rx="44" fill="#111827"/>
+  <text x="172" y="887" fill="#ffffff" font-size="30" font-family="Arial, sans-serif" font-weight="700">立即抢购</text>
+</svg>

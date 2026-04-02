@@ -1,0 +1,39 @@
+{
+  "source": {
+    "url": "https://smp.iyouke.com/dtmall/pageDesign?newPage=true&platformType=1",
+    "method": "Chrome DevTools MCP + 页面内组件配置数据自动读取",
+    "captured_at": "2026-03-30"
+  },
+  "summary": {
+    "total_visible": 26,
+    "total_unique": 26
+  },
+  "components": [
+    {"name": "标题文字", "key": "title", "type": "title", "limit": null, "minVersion": null},
+    {"name": "图文广告", "key": "banner", "type": "banner", "limit": null, "minVersion": null},
+    {"name": "商品", "key": "product", "type": "product", "limit": null, "minVersion": null},
+    {"name": "辅助分割", "key": "white", "type": "white", "limit": null, "minVersion": null},
+    {"name": "公告", "key": "notice", "type": "notice", "limit": null, "minVersion": null},
+    {"name": "富文本", "key": "richtext", "type": "richtext", "limit": null, "minVersion": null},
+    {"name": "自由热区", "key": "hotspot", "type": "hotspot", "limit": null, "minVersion": null},
+    {"name": "搜索框", "key": "search", "type": "search", "limit": null, "minVersion": null},
+    {"name": "视频", "key": "video", "type": "video", "limit": 10, "minVersion": null},
+    {"name": "图文导航", "key": "navigation", "type": "navigation", "limit": null, "minVersion": null},
+    {"name": "电梯导航", "key": "elevator", "type": "elevator", "limit": 1, "minVersion": null},
+    {"name": "链接导航", "key": "linkNav", "type": "linkNav", "limit": 1, "minVersion": null},
+    {"name": "优惠券", "key": "coupon", "type": "coupon", "limit": null, "minVersion": null},
+    {"name": "限时优惠", "key": "limit", "type": "limit", "limit": null, "minVersion": null},
+    {"name": "拼团", "key": "group", "type": "group", "limit": null, "minVersion": null},
+    {"name": "积分商品", "key": "integral", "type": "integral", "limit": null, "minVersion": null},
+    {"name": "涨粉", "key": "increaseFans", "type": "increaseFans", "limit": null, "minVersion": null},
+    {"name": "预约事件", "key": "bookEvent", "type": "bookEvent", "limit": null, "minVersion": null},
+    {"name": "办理会员", "key": "handleMember", "type": "handleMember", "limit": 1, "minVersion": null},
+    {"name": "社区帖子", "key": "community", "type": "community", "limit": 1, "minVersion": null},
+    {"name": "导购商品", "key": "fanliProd", "type": "fanliProd", "limit": null, "minVersion": "2.4.29"},
+    {"name": "商品混排", "key": "prodMix", "type": "prodMix", "limit": 2, "minVersion": "2.11.25"},
+    {"name": "视频号直播", "key": "videoChannel", "type": "videoChannel", "limit": null, "minVersion": null},
+    {"name": "橱窗商品", "key": "videoChannelProdV2", "type": "videoChannelProdV2", "limit": 10, "minVersion": "2.12.0"},
+    {"name": "店铺商品", "key": "wechatShopProd", "type": "wechatShopProd", "limit": null, "minVersion": "2.10.85"},
+    {"name": "店铺首页", "key": "wechatShop", "type": "wechatShop", "limit": null, "minVersion": "2.11.25"}
+  ]
+}

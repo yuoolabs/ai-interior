@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>微页面智能搭建助手 Demo</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <h1>微页面智能搭建助手</h1>
+      <p>输入需求，自动生成可用初稿（结构 + 组件映射 + 搭建执行 + 校验结果）</p>
+    </header>
+
+    <section class="panel">
+      <h2>1. 输入需求</h2>
+      <form id="briefForm" class="form-grid">
+        <label>
+          页面需求（必填）
+          <textarea id="demand" rows="4" placeholder="例如：做一个母婴大促卖货页，突出满减和爆款商品" required></textarea>
+        </label>
+
+        <label>
+          行业
+          <select id="industry">
+            <option value="">自动识别</option>
+            <option value="母婴">母婴</option>
+            <option value="美妆">美妆</option>
+            <option value="食品">食品</option>
+            <option value="服饰">服饰</option>
+            <option value="通用">通用</option>
+          </select>
+        </label>
+
+        <label>
+          目标
+          <select id="goal">
+            <option value="">自动识别</option>
+            <option value="卖货转化">卖货转化</option>
+            <option value="活动推广">活动推广</option>
+            <option value="会员拉新">会员拉新</option>
+          </select>
+        </label>
+
+        <label>
+          风格
+          <select id="style">
+            <option value="">自动识别</option>
+            <option value="大促">大促</option>
+            <option value="清新">清新</option>
+            <option value="品牌感">品牌感</option>
+          </select>
+        </label>
+
+        <label>
+          参考图（可选，Demo 会自动分析）
+          <input id="reference" type="file" accept="image/*" />
+        </label>
+
+        <button type="submit" class="primary">生成页面初稿</button>
+      </form>
+
+      <div class="inline-build-action">
+        <button id="startBuildButton" class="secondary" type="button" disabled>开始自动搭建到后台</button>
+      </div>
+
+      <div class="reference-panel" id="referencePanel" hidden>
+        <div class="reference-preview">
+          <img id="referencePreview" alt="参考图预览" />
+        </div>
+        <div class="reference-meta">
+          <h3>参考图判断</h3>
+          <div id="referenceSummary"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="resultPanel" hidden>
+      <h2>2. 结果总览</h2>
+      <div class="summary" id="summary"></div>
+    </section>
+
+    <section class="panel" id="buildPanel" hidden>
+      <h3>3. 自动搭建状态</h3>
+      <div class="build-status" id="buildStatus"></div>
+      <div class="build-grid">
+        <div>
+          <h4>本次搭建信息</h4>
+          <ul id="buildMeta"></ul>
+        </div>
+        <div>
+          <h4>接下来会做</h4>
+          <ol id="buildSteps"></ol>
+        </div>
+      </div>
+      <pre id="buildPayload"></pre>
+    </section>
+
+    <section class="grid-2" id="details" hidden>
+      <article class="panel">
+        <h3>页面结构</h3>
+        <ol id="structureList"></ol>
+      </article>
+      <article class="panel">
+        <h3>组件映射</h3>
+        <ul id="mappingList"></ul>
+      </article>
+      <article class="panel">
+        <h3>执行记录（模拟 MCP）</h3>
+        <ol id="executionList"></ol>
+      </article>
+      <article class="panel">
+        <h3>校验与差异说明</h3>
+        <div id="validation"></div>
+      </article>
+    </section>
+
+    <section class="grid-2" id="taskPanel" hidden>
+      <article class="panel">
+        <h3>任务拆解</h3>
+        <ol id="taskList"></ol>
+      </article>
+      <article class="panel">
+        <h3>MCP 执行脚本</h3>
+        <pre id="mcpOutput"></pre>
+      </article>
+    </section>
+
+    <section class="grid-2" id="runtimePanel" hidden>
+      <article class="panel">
+        <h3>真实动作锚点</h3>
+        <pre id="selectorOutput"></pre>
+      </article>
+      <article class="panel">
+        <h3>动作模板</h3>
+        <pre id="actionOutput"></pre>
+      </article>
+    </section>
+
+    <section class="panel" id="bootstrapPanel" hidden>
+      <h3>首条真实执行链（4 步）</h3>
+      <pre id="bootstrapOutput"></pre>
+    </section>
+
+    <section class="panel" id="savePanel" hidden>
+      <h3>保存前检查</h3>
+      <pre id="saveOutput"></pre>
+    </section>
+
+    <section class="panel" id="jsonPanel" hidden>
+      <h3>结构化输出（给研发）</h3>
+      <pre id="jsonOutput"></pre>
+    </section>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
