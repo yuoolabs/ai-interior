@@ -12,6 +12,7 @@ const { RolloutPolicy } = require("./services/rollout-policy");
 const { AssetPipeline } = require("./services/asset-pipeline");
 const { ExecutionStateMachine } = require("./services/state-machine");
 const { Orchestrator } = require("./services/orchestrator");
+const { buildComponentPolicyFromEnv } = require("./services/component-policy");
 
 function createOrchestrator({ rootDir, uiFallbackRunner } = {}) {
   const modelGateway = new ModelGateway();
@@ -46,6 +47,7 @@ function getSystemConfig() {
   const adapterMode = process.env.MICROPAGE_ADAPTER_MODE || "mock";
   const adapter = new PageAdapter({ mode: adapterMode });
   const validation = validateAdapterConfig(adapter.config);
+  const componentPolicy = buildComponentPolicyFromEnv();
 
   return {
     model: {
@@ -69,6 +71,11 @@ function getSystemConfig() {
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean)
+    },
+    componentPolicy: {
+      strict: componentPolicy.strict,
+      allowedModules: componentPolicy.allowedModules,
+      allowedComponents: componentPolicy.allowedComponents
     }
   };
 }

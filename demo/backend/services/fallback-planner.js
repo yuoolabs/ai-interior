@@ -1,4 +1,5 @@
 const { MODULE_LIBRARY, COMPONENT_DICTIONARY, PAGE_TEMPLATES } = require("../utils/domain-rules");
+const { buildComponentPolicyFromEnv } = require("./component-policy");
 
 function parseIntentFallback(input = {}) {
   const demand = String(input.demand || "").trim();
@@ -81,19 +82,51 @@ function planPage(parsed, template) {
 }
 
 function mapComponents(pageStructure) {
+  const componentPolicy = buildComponentPolicyFromEnv();
+  const allowedModuleSet = new Set(componentPolicy.allowedModules);
+  const allowedComponentSet = new Set(componentPolicy.allowedComponents);
+
   return pageStructure.map((block) => {
     const rule = COMPONENT_DICTIONARY[block.type];
     if (!rule) {
       return {
         module: block.type,
-        status: "fallback",
-        component: "richtext",
-        displayName: "富文本",
-        fallbackComponent: "title",
-        reason: "没有命中规则，降级到文本组合",
-        fields: ["title", "content"],
+        status: "unresolved",
+        component: "unmapped",
+        displayName: "待人工映射",
+        fallbackComponent: null,
+        reason: "模块不在后台组件目录内，已阻断自动映射",
+        fields: [],
         limit: null,
         minVersion: null
+      };
+    }
+
+    if (componentPolicy.strict && !allowedModuleSet.has(block.type)) {
+      return {
+        module: block.type,
+        status: "unresolved",
+        component: rule.component,
+        displayName: rule.displayName,
+        fallbackComponent: null,
+        reason: "模块不在允许清单，已阻断自动映射",
+        fields: [],
+        limit: rule.limit ?? null,
+        minVersion: rule.minVersion ?? null
+      };
+    }
+
+    if (componentPolicy.strict && !allowedComponentSet.has(rule.component)) {
+      return {
+        module: block.type,
+        status: "unresolved",
+        component: rule.component,
+        displayName: rule.displayName,
+        fallbackComponent: null,
+        reason: "组件不在允许清单，已阻断自动映射",
+        fields: [],
+        limit: rule.limit ?? null,
+        minVersion: rule.minVersion ?? null
       };
     }
 
@@ -126,6 +159,7 @@ function validateResult({ pageStructure, componentPlan, parsed }) {
 
   const fallbackCount = componentPlan.filter((item) => item.status !== "direct").length;
   const unresolvedModules = componentPlan.filter((item) => item.status === "unresolved").map((item) => item.module);
+  const blockedByPolicy = componentPlan.filter((item) => item.status === "unresolved" && item.reason.includes("允许清单")).map((item) => item.module);
   const limitWarnings = componentPlan
     .filter((item) => item.limit || item.minVersion)
     .map((item) => `${item.displayName}${describeConstraint(item)}`);
@@ -136,6 +170,7 @@ function validateResult({ pageStructure, componentPlan, parsed }) {
     missing_components: missingCore,
     fallback_count: fallbackCount,
     unresolved_modules: unresolvedModules,
+    blocked_by_component_policy: blockedByPolicy,
     checks: {
       structure_ok: missingCore.length === 0,
       content_ok: true,
@@ -165,7 +200,9 @@ function buildExecutionGraph(componentPlan, parsed) {
     { id: "set_name", action: "set_page_name", title: "填写页面名称", critical: true, payload: { pageName } }
   ];
 
-  componentPlan.forEach((item, index) => {
+  componentPlan
+    .filter((item) => item.status !== "unresolved")
+    .forEach((item, index) => {
     nodes.push({
       id: `add_component_${index + 1}`,
       action: "add_component",
@@ -183,7 +220,7 @@ function buildExecutionGraph(componentPlan, parsed) {
         critical: false
       });
     }
-  });
+    });
 
   nodes.push({ id: "save_page", action: "save_page", title: "保存页面", critical: true });
   nodes.push({ id: "publish_page", action: "publish_page", title: "发布页面", critical: true });

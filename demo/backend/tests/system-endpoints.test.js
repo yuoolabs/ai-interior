@@ -36,6 +36,9 @@ test("system endpoints should provide config and profile validation", async () =
 
     const config = await getJson(`http://127.0.0.1:${port}/v1/system/config`);
     assert.equal(typeof config.system?.adapter?.configValid, "boolean");
+    assert.equal(typeof config.system?.componentPolicy?.strict, "boolean");
+    assert.ok(Array.isArray(config.system?.componentPolicy?.allowedModules));
+    assert.ok(Array.isArray(config.system?.componentPolicy?.allowedComponents));
 
     const rollout = await getJson(`http://127.0.0.1:${port}/v1/system/rollout`);
     assert.equal(typeof rollout.rollout?.realAutoPublishEnabled, "boolean");

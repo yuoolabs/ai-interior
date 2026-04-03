@@ -56,6 +56,9 @@ npm start
 - `MICROPAGE_API_HEALTH_PATH=/health`（可选，real 模式预检连通性探测路径）
 - `ENABLE_REAL_AUTO_PUBLISH=true|false`（real 模式自动发布总开关，默认 false）
 - `AUTOPUBLISH_TENANT_ALLOWLIST=tenant_a,tenant_b`（可选，real 模式发布灰度白名单）
+- `MICROPAGE_STRICT_COMPONENT_POLICY=true|false`（默认 true，强制只用允许组件）
+- `MICROPAGE_ALLOWED_MODULES=banner,coupon,product_grid,cta`（可选，限定可用模块）
+- `MICROPAGE_ALLOWED_COMPONENTS=banner,coupon,product,linkNav`（可选，限定可用组件 key）
 
 ### 真实接口映射示例
 ```bash
@@ -108,6 +111,9 @@ export MICROPAGE_API_BASE=https://your-domain.com
 export MICROPAGE_API_TOKEN=xxxx
 export ENABLE_REAL_AUTO_PUBLISH=true
 export AUTOPUBLISH_TENANT_ALLOWLIST=tenant_a,tenant_b
+export MICROPAGE_STRICT_COMPONENT_POLICY=true
+export MICROPAGE_ALLOWED_MODULES=banner,benefit_bar,coupon,countdown,product_grid,member_form,event_form,search_entry,live_room,cta
+export MICROPAGE_ALLOWED_COMPONENTS=banner,title,coupon,limit,product,handleMember,bookEvent,search,videoChannel,linkNav
 ```
 
 如果你希望按“真实后端字段”快速改一版，建议从这份模板开始：
@@ -134,3 +140,4 @@ curl -X POST http://127.0.0.1:8001/v1/system/profile/validate \
 - 审计日志默认写入：`demo/logs/audit-events.log`。
 - 可通过 `GET /v1/system/health` 查看当前模型/适配器模式与配置有效性。
 - `GET /v1/runs/:id` 已返回 `failure_reason`、`retry_suggestions`、`audit_trace_id`，可直接用于失败诊断与重试引导。
+- 当启用严格组件策略时，AI 只会在允许清单内选组件；超出清单会标记 `unresolved` 并阻断自动发布。

@@ -12,6 +12,11 @@ class RiskEngine {
       findings.push({ level: "high", code: "UNRESOLVED_MODULE", message: `存在未实现模块: ${unresolved.join(",")}` });
     }
 
+    const blockedByPolicy = draft?.validation?.blocked_by_component_policy || [];
+    if (blockedByPolicy.length) {
+      findings.push({ level: "high", code: "COMPONENT_POLICY_BLOCK", message: `存在不在允许清单的模块: ${blockedByPolicy.join(",")}` });
+    }
+
     const visualNeeded = (draft?.componentPlan || []).some((item) => item.displayName === "图文广告");
     const visualReady = Array.isArray(assets) && assets.some((item) => item.material_id);
     if (visualNeeded && !visualReady) {
