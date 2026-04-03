@@ -1,0 +1,58 @@
+{
+  "uploadMaterial": {
+    "method": "POST",
+    "path": "/v2/media/upload",
+    "payloadTemplate": {
+      "filePath": "{{input.filePath}}",
+      "name": "{{input.title}}",
+      "prompt": "{{input.prompt}}"
+    },
+    "parseTemplate": {
+      "materialId": "{{res.data.materialId}}",
+      "status": "uploaded",
+      "statusLabel": "已上传素材库",
+      "integrationHint": "通过 v2/media/upload 完成上传"
+    }
+  },
+  "actions": {
+    "create_page": {
+      "method": "POST",
+      "path": "/v2/pages/create",
+      "payloadTemplate": {
+        "name": "{{run.context.pageName}}",
+        "goal": "{{run.context.draft.parsed.page_goal}}"
+      }
+    },
+    "set_page_name": {
+      "method": "PATCH",
+      "path": "/v2/pages/{{runtime.pageId}}/name",
+      "payloadTemplate": {
+        "name": "{{node.payload.pageName}}"
+      }
+    },
+    "add_component": {
+      "method": "POST",
+      "path": "/v2/pages/{{runtime.pageId}}/components/add",
+      "payloadTemplate": {
+        "componentType": "{{node.payload.component}}",
+        "module": "{{node.payload.module}}"
+      }
+    },
+    "fill_component": {
+      "method": "POST",
+      "path": "/v2/pages/{{runtime.pageId}}/components/fill",
+      "payloadTemplate": {
+        "componentType": "{{node.payload.component}}",
+        "materialId": "{{assets.0.material_id}}"
+      }
+    },
+    "save_page": {
+      "method": "POST",
+      "path": "/v2/pages/{{runtime.pageId}}/save"
+    },
+    "publish_page": {
+      "method": "POST",
+      "path": "/v2/pages/{{runtime.pageId}}/publish"
+    }
+  }
+}

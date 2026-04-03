@@ -1,8 +1,3 @@
-import { buildDraft, parseInput } from "./core/planner.js";
-import { buildExecutionPlan } from "./core/executor.js";
-import { explainDiff, validateResult } from "./core/validator.js";
-import { analyzeReferenceImage } from "./core/reference-analyzer.js";
-
 const form = document.getElementById("briefForm");
 const demandInput = document.getElementById("demand");
 const industryInput = document.getElementById("industry");
@@ -24,8 +19,8 @@ const referencePanel = document.getElementById("referencePanel");
 const referenceSummary = document.getElementById("referenceSummary");
 
 const resultPanel = document.getElementById("resultPanel");
-const assetPanel = document.getElementById("assetPanel");
-const assetList = document.getElementById("assetList");
+const pagePreviewPanel = document.getElementById("pagePreviewPanel");
+const pagePreview = document.getElementById("pagePreview");
 const details = document.getElementById("details");
 const buildPanel = document.getElementById("buildPanel");
 
@@ -59,8 +54,8 @@ customThemeColorInput.addEventListener("input", () => {
 
 referenceInput.addEventListener("change", async () => {
   referenceFileName.textContent = referenceInput.files[0]?.name || "未选择文件";
-  latestReferenceAnalysis = await analyzeReferenceImage(referenceInput.files[0]);
-  renderReference(latestReferenceAnalysis);
+  latestReferenceAnalysis = null;
+  renderReference(null);
   renderAiExperience();
 });
 
@@ -79,44 +74,71 @@ form.addEventListener("submit", async (event) => {
   latestBuildStatus = null;
   latestBuildRun = null;
 
-  const referenceAnalysis = latestReferenceAnalysis || await analyzeReferenceImage(referenceInput.files[0]);
+  try {
+    const reference = await buildReferencePayload(referenceInput.files[0]);
+    const payload = {
+      demand: demandInput.value,
+      industry: industryInput.value,
+      goal: goalInput.value,
+      style: styleInput.value,
+      themeColorMode: getThemeColorMode(),
+      customThemeColor: customThemeColorInput.value,
+      reference
+    };
 
-  const parsed = parseInput({
-    demand: demandInput.value,
-    industry: industryInput.value,
-    goal: goalInput.value,
-    style: styleInput.value,
-    themeColorMode: getThemeColorMode(),
-    customThemeColor: customThemeColorInput.value,
-    referenceFile: referenceInput.files[0],
-    referenceAnalysis
-  });
+    const intentResponse = await fetch("/v1/intent/parse", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!intentResponse.ok) throw new Error("意图解析失败");
+    const intentData = await intentResponse.json();
 
-  const draft = buildDraft(parsed);
-  const generatedAssets = await generateVisualAssets({
-    parsed,
-    template: draft.template,
-    pageStructure: draft.pageStructure,
-    componentPlan: draft.componentPlan,
-    referenceAnalysis
-  });
-  const execution = buildExecutionPlan(draft.componentPlan, parsed, generatedAssets);
-  const validationResult = validateResult({
-    pageStructure: draft.pageStructure,
-    componentPlan: draft.componentPlan,
-    parsed
-  });
-  const diff = explainDiff(draft.componentPlan);
+    const designResponse = await fetch("/v1/design/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ intent: intentData.parsed })
+    });
+    if (!designResponse.ok) throw new Error("设计生成失败");
+    const designData = await designResponse.json();
 
-  latestDraftData = {
-    ...draft,
-    generatedAssets,
-    execution,
-    validation: validationResult,
-    diff
-  };
+    const assetsResponse = await fetch("/v1/assets/generate-and-upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ design_id: designData.design_id })
+    });
+    if (!assetsResponse.ok) throw new Error("素材生成失败");
+    const assetsData = await assetsResponse.json();
 
-  render(latestDraftData);
+    latestReferenceAnalysis = designData.parsed?.reference_analysis || null;
+    latestDraftData = {
+      ...designData,
+      generatedAssets: assetsData.assets || []
+    };
+
+    render(latestDraftData);
+  } catch (error) {
+    latestDraftData = null;
+    resultPanel.hidden = true;
+    details.hidden = true;
+    buildPanel.hidden = true;
+    latestBuildStatus = {
+      state: "failed",
+      message: "生成失败，请稍后重试",
+      currentStep: "生成失败",
+      logs: [error.message],
+      events: [
+        {
+          stage: "runtime_execution",
+          title: "生成流程失败",
+          message: error.message || "unknown_error",
+          status: "failed",
+          kind: "warning"
+        }
+      ]
+    };
+    renderAiExperience();
+  }
 });
 
 startBuildButton.addEventListener("click", async () => {
@@ -128,12 +150,17 @@ startBuildButton.addEventListener("click", async () => {
   startBuildButton.disabled = true;
 
   try {
-    const response = await fetch("/api/build/start", {
+    const response = await fetch("/v1/page/execute", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildRun)
+      body: JSON.stringify({
+        design_id: latestDraftData.design_id,
+        draft: latestDraftData,
+        auto_publish: true,
+        auth_level: "service_account"
+      })
     });
 
     if (!response.ok) {
@@ -141,7 +168,7 @@ startBuildButton.addEventListener("click", async () => {
     }
 
     const result = await response.json();
-    currentBuildJobId = result.jobId;
+    currentBuildJobId = result.run_id;
     latestBuildStatus = result;
     renderBuildRun(buildRun, latestBuildStatus);
     pollBuildStatus(buildRun);
@@ -185,7 +212,7 @@ function render(data) {
   ].join("");
 
   renderReference(data.parsed.reference_analysis);
-  renderAssets(data.generatedAssets || []);
+  renderPagePreview(data);
   renderAiExperience();
 
   structureList.innerHTML = data.pageStructure
@@ -208,33 +235,237 @@ function render(data) {
   ].join("");
 }
 
-function renderAssets(generatedAssets) {
-  if (!generatedAssets.length) {
-    assetPanel.hidden = true;
-    assetList.innerHTML = "";
+function renderPagePreview(data) {
+  if (!data?.pageStructure?.length) {
+    pagePreviewPanel.hidden = true;
+    pagePreview.innerHTML = "";
     return;
   }
 
-  assetPanel.hidden = false;
-  assetList.innerHTML = generatedAssets
-    .map(
-      (asset) => `
-        <article class="asset-card">
-          <div class="asset-preview">
-            <img src="${escapeHtml(asset.publicUrl)}" alt="${escapeHtml(asset.title)}" />
+  pagePreviewPanel.hidden = false;
+  pagePreview.innerHTML = `
+    <div class="page-preview-phone">
+      <div class="page-preview-screen">
+        <div class="page-preview-status">
+          <span>09:41</span>
+          <div class="page-preview-status-dots"><span></span><span></span><span></span></div>
+        </div>
+        <div class="page-preview-canvas">
+          ${data.pageStructure.map((block, index) => renderPreviewBlock(block, index, data)).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPreviewBlock(block, index, data) {
+  const themeColor = data.parsed.theme_color_value || "#8C4B2F";
+  const bannerAsset = (data.generatedAssets || []).find((item) => item.componentModule === "banner" || item.componentDisplayName === "图文广告");
+  const previewProducts = createPreviewProducts(data.parsed.page_goal);
+
+  if (block.type === "banner") {
+    return `
+      <section class="page-preview-block page-preview-banner">
+        ${bannerAsset
+          ? `<img src="${escapeHtml(bannerAsset.publicUrl)}" alt="${escapeHtml(bannerAsset.title)}" />`
+          : `
+            <div class="page-preview-banner-fallback" style="background: linear-gradient(145deg, ${escapeHtml(lightenHex(themeColor, 0.68))}, ${escapeHtml(lightenHex(themeColor, 0.22))});">
+              <span class="page-preview-badge">${escapeHtml(data.parsed.style)}</span>
+              <div class="page-preview-banner-copy">
+                <strong>${escapeHtml(resolvePreviewHeadline(data.parsed.page_goal))}</strong>
+                <span>${escapeHtml(data.parsed.raw_demand || "AI 正在根据需求搭建页面结构与视觉节奏。")}</span>
+              </div>
+            </div>`}
+      </section>
+    `;
+  }
+
+  if (block.type === "benefit_bar") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-benefits">
+          ${[
+            ["限时福利", "爆款直降"],
+            ["满减叠加", "券后更省"],
+            ["即时承接", "下单入口"]
+          ]
+            .map(
+              ([title, desc]) => `
+                <article class="page-preview-benefit">
+                  <div class="page-preview-benefit-mark" style="background:${escapeHtml(lightenHex(themeColor, 0.76))};"></div>
+                  <strong>${escapeHtml(title)}</strong>
+                  <span>${escapeHtml(desc)}</span>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  if (block.type === "coupon") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-coupon">
+          <div>
+            <strong>满 199 减 40</strong>
+            <span>叠加专区商品，限今日可用</span>
           </div>
-          <div class="asset-copy">
-            <strong>${escapeHtml(asset.title)}</strong>
-            <p>${escapeHtml(asset.promptSummary || "AI 生成视觉素材")}</p>
-            <div class="asset-meta">
-              <span>${escapeHtml(asset.componentDisplayName)}</span>
-              <span>${escapeHtml(asset.uploadStatusLabel || asset.uploadStatus || "待处理")}</span>
-            </div>
-          </div>
-        </article>
-      `
-    )
-    .join("");
+          <button type="button">立即领取</button>
+        </div>
+      </section>
+    `;
+  }
+
+  if (block.type === "countdown") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-section-title">
+          <strong>限时抢购</strong>
+          <span>03 : 21 : 48</span>
+        </div>
+      </section>
+    `;
+  }
+
+  if (block.type === "product_grid") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-section-title">
+          <strong>AI 推荐商品</strong>
+          <span>${escapeHtml(data.template.name)}</span>
+        </div>
+        <div class="page-preview-product-grid">
+          ${previewProducts
+            .map(
+              (item, productIndex) => `
+                <article class="page-preview-product">
+                  <div class="page-preview-product-image" style="background:
+                    radial-gradient(circle at 72% 22%, ${escapeHtml(lightenHex(themeColor, 0.74))} 0, transparent 34%),
+                    linear-gradient(145deg, #ffffff, ${escapeHtml(lightenHex(themeColor, productIndex % 2 === 0 ? 0.88 : 0.8))});"></div>
+                  <div class="page-preview-product-copy">
+                    <strong>${escapeHtml(item.name)}</strong>
+                    <div class="page-preview-product-meta">
+                      <span class="page-preview-product-price">${escapeHtml(item.price)}</span>
+                      <span class="page-preview-product-tag">${escapeHtml(item.tag)}</span>
+                    </div>
+                  </div>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  if (block.type === "search_entry") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-section-title">
+          <strong>搜索专区</strong>
+          <span>Search</span>
+        </div>
+        <div class="page-preview-richtext">搜索爆款、优惠专区或品牌关键词，快速进入目标商品。</div>
+      </section>
+    `;
+  }
+
+  if (block.type === "live_room") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-section-title">
+          <strong>直播精选</strong>
+          <span>Live</span>
+        </div>
+        <div class="page-preview-mini-grid">
+          ${Array.from({ length: 4 }, (_, liveIndex) => `
+            <article class="page-preview-mini-card">
+              <div class="page-preview-mini-thumb" style="background:${escapeHtml(lightenHex(themeColor, 0.78 - liveIndex * 0.04))};"></div>
+              <span>直播卡片 ${liveIndex + 1}</span>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  if (block.type === "member_form" || block.type === "event_form") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-section-title">
+          <strong>${escapeHtml(block.purpose)}</strong>
+          <span>Form</span>
+        </div>
+        <div class="page-preview-richtext">AI 已预留表单承接位，便于后续接入会员办理或活动报名流程。</div>
+      </section>
+    `;
+  }
+
+  if (block.type === "cta") {
+    return `
+      <section class="page-preview-block">
+        <div class="page-preview-cta">
+          <strong>${escapeHtml(resolvePreviewHeadline(data.parsed.page_goal))}</strong>
+          <button type="button">立即进入活动</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="page-preview-block">
+      <div class="page-preview-section-title">
+        <strong>${escapeHtml(block.type)}</strong>
+        <span>${String(index + 1).padStart(2, "0")}</span>
+      </div>
+      <div class="page-preview-richtext">${escapeHtml(block.purpose)}</div>
+    </section>
+  `;
+}
+
+function createPreviewProducts(pageGoal) {
+  if (pageGoal === "会员拉新") {
+    return [
+      { name: "会员专享洁面礼盒", price: "¥129", tag: "会员价" },
+      { name: "新人加赠旅行套装", price: "¥59", tag: "新客礼" },
+      { name: "加购即送护理小样", price: "¥39", tag: "加购礼" },
+      { name: "年度权益组合包", price: "¥199", tag: "权益包" }
+    ];
+  }
+
+  if (pageGoal === "活动推广") {
+    return [
+      { name: "活动主推单品", price: "¥89", tag: "报名款" },
+      { name: "限时加赠专区", price: "¥69", tag: "限时" },
+      { name: "参与即领体验装", price: "¥29", tag: "互动礼" },
+      { name: "专题组合礼包", price: "¥149", tag: "推荐" }
+    ];
+  }
+
+  return [
+    { name: "爆款修护精华", price: "¥139", tag: "爆款" },
+    { name: "限时直降礼盒", price: "¥199", tag: "直降" },
+    { name: "高复购清洁套组", price: "¥79", tag: "热卖" },
+    { name: "明星同款面霜", price: "¥159", tag: "推荐" },
+    { name: "折扣专区组合", price: "¥99", tag: "满减" },
+    { name: "AI 推荐加购品", price: "¥49", tag: "加购" }
+  ];
+}
+
+function resolvePreviewHeadline(pageGoal) {
+  if (pageGoal === "会员拉新") return "现在开卡，立刻解锁专属权益";
+  if (pageGoal === "活动推广") return "活动名额有限，先报名先锁福利";
+  return "限时好价上新，爆款一页直达";
+}
+
+function lightenHex(hex, amount) {
+  const value = String(hex || "#8C4B2F").replace("#", "");
+  const full = value.length === 3 ? value.split("").map((item) => item + item).join("") : value.padEnd(6, "0");
+  const channels = full.match(/.{2}/g)?.map((item) => Number.parseInt(item, 16)) || [140, 75, 47];
+  const mixed = channels.map((channel) => Math.round(channel + (255 - channel) * amount));
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function renderReference(referenceAnalysis) {
@@ -505,6 +736,25 @@ function getThemeColorMode() {
   return [...themeColorModeInputs].find((input) => input.checked)?.value || "page";
 }
 
+async function buildReferencePayload(file) {
+  if (!file) return null;
+  const imageDataUrl = await readFileAsDataUrl(file);
+  return {
+    fileName: file.name,
+    mimeType: file.type || "image/*",
+    imageDataUrl
+  };
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function syncThemeColorMode() {
   const isCustom = getThemeColorMode() === "custom";
   themeColorPicker.hidden = !isCustom;
@@ -548,7 +798,7 @@ async function pollBuildStatus(buildRun) {
     if (!currentBuildJobId) return;
 
     try {
-      const response = await fetch(`/api/build/status?id=${encodeURIComponent(currentBuildJobId)}`);
+      const response = await fetch(`/v1/runs/${encodeURIComponent(currentBuildJobId)}`);
       if (!response.ok) {
         throw new Error("状态查询失败");
       }
@@ -583,27 +833,6 @@ async function pollBuildStatus(buildRun) {
       renderBuildRun(buildRun, latestBuildStatus);
     }
   }, 1200);
-}
-
-async function generateVisualAssets(payload) {
-  try {
-    const response = await fetch("/api/assets/generate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      throw new Error("素材生成失败");
-    }
-
-    const result = await response.json();
-    return Array.isArray(result.assets) ? result.assets : [];
-  } catch {
-    return [];
-  }
 }
 
 function renderBuildRun(buildRun, status) {

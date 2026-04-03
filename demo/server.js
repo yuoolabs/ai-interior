@@ -3,12 +3,45 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const { createOrchestrator, getSystemConfig } = require("./backend");
+const { createDefaultAdapterConfig, applyCustomConfig, validateAdapterConfig } = require("./backend/services/page-adapter-config");
 
 const execFileAsync = promisify(execFile);
 const port = Number(process.env.PORT || 8001);
 const rootDir = __dirname;
 const jobs = new Map();
 let eventSequence = 0;
+
+const orchestrator = createOrchestrator({
+  rootDir,
+  uiFallbackRunner: async ({ run, draft, assets }) => {
+    const buildRun = {
+      pageName: draft?.execution?.page_name || `AI-${Date.now()}`,
+      pageGoal: draft?.parsed?.page_goal || "卖货转化",
+      backendUrl: draft?.execution?.runtimeSelectors?.listPage?.pageUrl || "https://smp.iyouke.com/dtmall/designPage",
+      actionTemplate: draft?.execution?.actionTemplate || [],
+      generatedAssets: assets || []
+    };
+
+    const legacyJob = {
+      id: run.id,
+      state: run.state || "running",
+      message: run.message || "准备开始",
+      currentStep: run.currentStep || "准备开始",
+      logs: run.logs || [],
+      events: run.events || [],
+      buildRun
+    };
+
+    await runBuild(legacyJob);
+
+    return {
+      channel: "ui_fallback",
+      pageId: `ui_${Date.now()}`,
+      completed: legacyJob.logs.slice(-10)
+    };
+  }
+});
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -24,6 +57,112 @@ const MIME_TYPES = {
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.method === "GET" && req.url === "/v1/system/health") {
+      return sendJson(res, 200, {
+        status: "ok",
+        time: new Date().toISOString(),
+        system: getSystemConfig()
+      });
+    }
+
+    if (req.method === "GET" && req.url === "/v1/system/config") {
+      return sendJson(res, 200, {
+        system: getSystemConfig()
+      });
+    }
+
+    if (req.method === "GET" && req.url === "/v1/system/rollout") {
+      return sendJson(res, 200, {
+        rollout: orchestrator.getRolloutStatus()
+      });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/system/preflight") {
+      const body = await readJson(req);
+      const result = await orchestrator.systemPreflight(body || {});
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/system/profile/validate") {
+      const body = await readJson(req);
+      const profile = resolveProfilePayload(body);
+      const merged = createDefaultAdapterConfig();
+      applyCustomConfig(merged, profile);
+      const validation = validateAdapterConfig(merged);
+      return sendJson(res, 200, {
+        valid: validation.valid,
+        errors: validation.errors,
+        hints: validation.valid
+          ? ["profile 配置通过，可用于 real 模式联调"]
+          : [
+              "补齐缺失 action 配置",
+              "检查 method/path 是否为空",
+              "确认路径模板中的变量能被解析（例如 runtime.pageId）"
+            ]
+      });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/intent/parse") {
+      const body = await readJson(req);
+      const result = await orchestrator.parseIntent(body);
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/design/generate") {
+      const body = await readJson(req);
+      const result = await orchestrator.generateDesign(body);
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/assets/generate-and-upload") {
+      const body = await readJson(req);
+      const result = await orchestrator.generateAssetsAndUpload(body);
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/page/execute") {
+      const body = await readJson(req);
+      const result = await orchestrator.executePage(body);
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/page/publish") {
+      const body = await readJson(req);
+      const result = await orchestrator.publishPage(body);
+      return sendJson(res, 200, result);
+    }
+
+    const runRoute = matchRunRoute(req.url || "");
+    if (runRoute && req.method === "GET" && runRoute.action === "get") {
+      const run = orchestrator.getRun(runRoute.runId);
+      if (!run) {
+        return sendJson(res, 404, { message: "任务不存在" });
+      }
+      return sendJson(res, 200, run);
+    }
+
+    if (runRoute && req.method === "POST" && runRoute.action === "takeover") {
+      const body = await readJson(req);
+      const result = await orchestrator.takeoverRun({
+        run_id: runRoute.runId,
+        reason: body?.reason,
+        operator: body?.operator
+      });
+      return sendJson(res, 200, result);
+    }
+
+    if (runRoute && req.method === "POST" && runRoute.action === "resume") {
+      const body = await readJson(req);
+      const result = await orchestrator.resumeRun({
+        run_id: runRoute.runId,
+        auto_publish: body?.auto_publish,
+        auth_level: body?.auth_level,
+        tenant_id: body?.tenant_id,
+        design_id: body?.design_id
+      });
+      return sendJson(res, 200, result);
+    }
+
     if (req.method === "POST" && req.url === "/api/assets/generate") {
       const body = await readJson(req);
       const assets = generateVisualAssets(body);
@@ -89,8 +228,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Demo server running at http://127.0.0.1:${port}`);
+server.listen(port, "0.0.0.0", () => {
+  console.log(`Demo server running at http://0.0.0.0:${port}`);
 });
 
 async function runBuild(job) {
@@ -150,6 +289,13 @@ async function runBuild(job) {
       completedSteps: job.logs.filter((item) => !item.startsWith("组件诊断")).slice(-8)
     }
   });
+}
+
+function resolveProfilePayload(body) {
+  if (!body || typeof body !== "object") return {};
+  if (body.profile && typeof body.profile === "object") return body.profile;
+  if (body.actions || body.uploadMaterial) return body;
+  return {};
 }
 
 function buildActionSteps(actionTemplate, buildRun, job) {
@@ -1411,6 +1557,31 @@ function escapeXml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+function matchRunRoute(rawUrl) {
+  if (!rawUrl || !rawUrl.startsWith("/v1/runs/")) return null;
+  const url = new URL(rawUrl, `http://127.0.0.1:${port}`);
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length === 3 && segments[0] === "v1" && segments[1] === "runs") {
+    return {
+      runId: decodeURIComponent(segments[2]),
+      action: "get"
+    };
+  }
+  if (segments.length === 4 && segments[0] === "v1" && segments[1] === "runs" && segments[3] === "takeover") {
+    return {
+      runId: decodeURIComponent(segments[2]),
+      action: "takeover"
+    };
+  }
+  if (segments.length === 4 && segments[0] === "v1" && segments[1] === "runs" && segments[3] === "resume") {
+    return {
+      runId: decodeURIComponent(segments[2]),
+      action: "resume"
+    };
+  }
+  return null;
 }
 
 function readJson(req) {

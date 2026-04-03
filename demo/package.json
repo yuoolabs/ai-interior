@@ -1,0 +1,12 @@
+{
+  "name": "micro-page-ai-platform-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-style AI micro-page orchestration demo",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node --test --test-concurrency=1 backend/tests/*.test.js",
+    "preflight": "node scripts/preflight.js"
+  }
+}

@@ -100,9 +100,20 @@
 
             <div class="form-actions">
               <button type="submit" form="briefForm" class="primary hero-primary">生成页面初稿</button>
-              <button id="startBuildButton" class="secondary hero-secondary" type="button" disabled>自动搭建到微页面</button>
+              <button id="startBuildButton" class="secondary hero-secondary" type="button" disabled>自动搭建并发布</button>
             </div>
           </form>
+
+          <section class="preview-dock" id="pagePreviewPanel" hidden>
+            <div class="section-head compact">
+              <p class="section-index">PRE</p>
+              <div>
+                <h3>预估页面效果</h3>
+                <p>点击生成页面初稿后，AI 会在这里给出一张可滚动的微页面效果预览。</p>
+              </div>
+            </div>
+            <div id="pagePreview" class="page-preview empty-ready-block" data-empty="生成页面初稿后，这里会展示预估搭建好的页面效果图"></div>
+          </section>
 
         </section>
 
@@ -142,17 +153,6 @@
               </div>
             </div>
             <div class="summary" id="summary"></div>
-          </section>
-
-          <section class="panel" id="assetPanel" hidden>
-            <div class="section-head compact">
-              <p class="section-index">VIS</p>
-              <div>
-                <h3>AI 生成素材</h3>
-                <p>命中图片组件时，AI 会先准备可带入页面的视觉素材，并把素材信息接入执行计划。</p>
-              </div>
-            </div>
-            <div id="assetList" class="asset-grid empty-ready-block" data-empty="命中图片组件后，AI 会在这里生成待带入的视觉素材"></div>
           </section>
 
           <section class="panel build-panel" id="buildPanel" hidden>
