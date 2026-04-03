@@ -1,0 +1,73 @@
+{
+  "uploadMaterial": {
+    "method": "POST",
+    "path": "/api/materials/upload",
+    "payloadTemplate": {
+      "file_path": "{{input.filePath}}",
+      "title": "{{input.title}}",
+      "prompt": "{{input.prompt}}",
+      "quality": "{{input.quality}}",
+      "source": "ai_orchestrator"
+    },
+    "parseTemplate": {
+      "materialId": "{{res.data.material_id}}",
+      "status": "uploaded",
+      "statusLabel": "已上传素材库",
+      "integrationHint": "素材上传成功，可直接回填组件"
+    }
+  },
+  "actions": {
+    "create_page": {
+      "method": "POST",
+      "path": "/api/micropage/create",
+      "payloadTemplate": {
+        "page_name": "{{run.context.pageName}}",
+        "page_goal": "{{run.context.draft.parsed.page_goal}}",
+        "source": "ai_orchestrator"
+      },
+      "parseTemplate": {
+        "pageId": "{{res.data.page_id}}"
+      }
+    },
+    "set_page_name": {
+      "method": "POST",
+      "path": "/api/micropage/{{runtime.pageId}}/rename",
+      "payloadTemplate": {
+        "page_name": "{{node.payload.pageName}}"
+      }
+    },
+    "add_component": {
+      "method": "POST",
+      "path": "/api/micropage/{{runtime.pageId}}/component/add",
+      "payloadTemplate": {
+        "component_type": "{{node.payload.component}}",
+        "module_key": "{{node.payload.module}}",
+        "display_name": "{{node.payload.displayName}}"
+      }
+    },
+    "fill_component": {
+      "method": "POST",
+      "path": "/api/micropage/{{runtime.pageId}}/component/fill",
+      "payloadTemplate": {
+        "component_type": "{{node.payload.component}}",
+        "display_name": "{{node.payload.displayName}}",
+        "material_id": "{{assets.0.material_id}}",
+        "fallback_text": "{{run.context.draft.copyDraft.headline}}"
+      }
+    },
+    "save_page": {
+      "method": "POST",
+      "path": "/api/micropage/{{runtime.pageId}}/save",
+      "payloadTemplate": {
+        "save_reason": "ai_auto_build"
+      }
+    },
+    "publish_page": {
+      "method": "POST",
+      "path": "/api/micropage/{{runtime.pageId}}/publish",
+      "payloadTemplate": {
+        "publish_source": "ai_orchestrator"
+      }
+    }
+  }
+}
