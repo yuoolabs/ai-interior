@@ -102,6 +102,21 @@ test("v1 api contract should satisfy end-to-end flow", async () => {
       const resumedRun = await pollRunFinal(`http://127.0.0.1:${port}`, resumed.run_id);
       assert.equal(resumedRun.resume_from_run_id, executeManual.run_id);
       assert.ok(["done", "failed", "blocked"].includes(resumedRun.state));
+
+      const autoBuild = await postJson(`http://127.0.0.1:${port}/v1/page/auto-build`, {
+        demand: "做一个卖货转化页面，突出优惠券和爆款商品",
+        style: "大促",
+        auto_publish: true,
+        auth_level: "service_account"
+      });
+      assert.ok(autoBuild.run_id);
+      assert.ok(autoBuild.design_id);
+      assert.ok(Array.isArray(autoBuild.design?.componentPlan));
+      assert.ok(autoBuild.design_draft?.execution?.page_name);
+      assert.ok(Array.isArray(autoBuild.design_draft?.componentPlan));
+      assert.ok(Array.isArray(autoBuild.design_draft?.generatedAssets));
+      assert.equal(typeof autoBuild.execute?.state, "string");
+      assert.equal(typeof autoBuild.trace_ids?.intent, "string");
     } catch (error) {
       throw new Error(`${error.message}; server_logs=${logs.slice(0, 600)}`);
     }

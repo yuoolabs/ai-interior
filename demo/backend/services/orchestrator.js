@@ -1,5 +1,5 @@
 class Orchestrator {
-  constructor({ intentService, designService, assetPipeline, stateMachine, runStore, auditService, pageAdapter }) {
+  constructor({ intentService, designService, assetPipeline, stateMachine, runStore, auditService, pageAdapter, modelGateway }) {
     this.intentService = intentService;
     this.designService = designService;
     this.assetPipeline = assetPipeline;
@@ -7,11 +7,15 @@ class Orchestrator {
     this.runStore = runStore;
     this.auditService = auditService;
     this.pageAdapter = pageAdapter;
+    this.modelGateway = modelGateway;
     this.designs = new Map();
   }
 
   async parseIntent(input) {
     const parsed = await this.intentService.parse(input);
+    if (input?.require_model && parsed?.model_fallback) {
+      throw new Error(`model_required_but_fallback:${parsed.model_fallback_reason || "intent_parse_fallback"}`);
+    }
     const trace = this.auditService.record({ type: "intent_parse", details: { parsed }, actor: "orchestrator" });
     return {
       parsed,
@@ -21,7 +25,18 @@ class Orchestrator {
 
   async generateDesign(input) {
     const intent = input.intent || (await this.intentService.parse(input));
+    if (input?.require_model && intent?.model_fallback) {
+      throw new Error(`model_required_but_fallback:${intent.model_fallback_reason || "intent_parse_fallback"}`);
+    }
     const draft = await this.designService.generate(intent);
+    if (input?.require_model) {
+      const blueprintFallback = Boolean(draft?.designBlueprint?.modelFallback);
+      const copyFallback = Boolean(draft?.copyDraft?.modelFallback);
+      if (blueprintFallback || copyFallback) {
+        const reason = draft?.designBlueprint?.modelFallbackReason || draft?.copyDraft?.modelFallbackReason || "design_generate_fallback";
+        throw new Error(`model_required_but_fallback:${reason}`);
+      }
+    }
     const designId = `design_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     this.designs.set(designId, {
@@ -170,6 +185,59 @@ class Orchestrator {
     };
   }
 
+  async autoBuild(input = {}) {
+    const intentResult = await this.parseIntent(input);
+    const designResult = await this.generateDesign({
+      intent: intentResult.parsed,
+      require_model: input.require_model
+    });
+    const assetsResult = await this.generateAssetsAndUpload({
+      design_id: designResult.design_id
+    });
+    const executeResult = await this.executePage({
+      design_id: designResult.design_id,
+      auto_publish: input.auto_publish !== false,
+      auth_level: input.auth_level || "service_account",
+      tenant_id: input.tenant_id || "default"
+    });
+
+    const designDraft = {
+      design_id: designResult.design_id,
+      parsed: designResult.parsed,
+      template: designResult.template,
+      pageStructure: designResult.pageStructure,
+      componentPlan: designResult.componentPlan,
+      validation: designResult.validation,
+      diff: designResult.diff,
+      execution: designResult.execution,
+      copyDraft: designResult.copyDraft,
+      designBlueprint: designResult.designBlueprint,
+      generatedAssets: assetsResult.assets || []
+    };
+
+    return {
+      run_id: executeResult.run_id,
+      state: executeResult.state,
+      design_id: designResult.design_id,
+      parsed: intentResult.parsed,
+      execute: executeResult,
+      design_draft: designDraft,
+      design: {
+        template: designResult.template,
+        pageStructure: designResult.pageStructure,
+        componentPlan: designResult.componentPlan,
+        copyDraft: designResult.copyDraft,
+        designBlueprint: designResult.designBlueprint
+      },
+      assets: assetsResult.assets || [],
+      trace_ids: {
+        intent: intentResult.trace_id,
+        design: designResult.trace_id,
+        assets: assetsResult.trace_id
+      }
+    };
+  }
+
   async takeoverRun(input = {}) {
     const runId = input.run_id;
     const run = runId ? this.runStore.getRun(runId) : null;
@@ -242,7 +310,43 @@ class Orchestrator {
   }
 
   async systemPreflight(input = {}) {
-    return this.pageAdapter.preflight(input);
+    const adapter = await this.pageAdapter.preflight(input);
+    const model = this.modelGateway?.preflight
+      ? await this.modelGateway.preflight({ strict: input.strict === true })
+      : {
+          ok: true,
+          provider: "unknown",
+          model: "",
+          baseUrl: "",
+          hasApiKey: false,
+          checks: []
+        };
+
+    return {
+      ...adapter,
+      model,
+      ok: Boolean(adapter.ok) && Boolean(model.ok)
+    };
+  }
+
+  async systemModelPreflight(input = {}) {
+    if (!this.modelGateway?.preflight) {
+      return {
+        ok: false,
+        provider: "unknown",
+        model: "",
+        baseUrl: "",
+        hasApiKey: false,
+        checks: [
+          {
+            name: "gateway_check",
+            ok: false,
+            message: "model_gateway_unavailable"
+          }
+        ]
+      };
+    }
+    return this.modelGateway.preflight(input);
   }
 
   getRolloutStatus() {

@@ -13,6 +13,7 @@ const { AssetPipeline } = require("./services/asset-pipeline");
 const { ExecutionStateMachine } = require("./services/state-machine");
 const { Orchestrator } = require("./services/orchestrator");
 const { buildComponentPolicyFromEnv } = require("./services/component-policy");
+const { loadComponentSkinCatalog } = require("./services/component-skin-catalog");
 
 function createOrchestrator({ rootDir, uiFallbackRunner } = {}) {
   const modelGateway = new ModelGateway();
@@ -39,7 +40,8 @@ function createOrchestrator({ rootDir, uiFallbackRunner } = {}) {
     stateMachine,
     runStore,
     auditService,
-    pageAdapter
+    pageAdapter,
+    modelGateway
   });
 }
 
@@ -48,19 +50,28 @@ function getSystemConfig() {
   const adapter = new PageAdapter({ mode: adapterMode });
   const validation = validateAdapterConfig(adapter.config);
   const componentPolicy = buildComponentPolicyFromEnv();
+  const componentSkinCatalog = loadComponentSkinCatalog({ rootDir: process.cwd() });
+
+  const modelProvider = process.env.MODEL_PROVIDER || "mock";
+  const modelApiKey = process.env.MODEL_API_KEY || (modelProvider === "gemini" ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY);
+  const defaultModelName = modelProvider === "gemini" ? "gemini-2.5-flash" : "gpt-5-mini";
+  const defaultBaseUrl = modelProvider === "gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1";
 
   return {
     model: {
-      provider: process.env.MODEL_PROVIDER || "mock",
-      name: process.env.MODEL_NAME || "gpt-5-mini",
-      hasApiKey: Boolean(process.env.OPENAI_API_KEY)
+      provider: modelProvider,
+      name: process.env.MODEL_NAME || defaultModelName,
+      hasApiKey: Boolean(modelApiKey),
+      baseUrl: process.env.MODEL_BASE_URL || defaultBaseUrl
     },
     adapter: {
       mode: adapterMode,
       apiBaseSet: Boolean(process.env.MICROPAGE_API_BASE),
+      apiBase: process.env.MICROPAGE_API_BASE || "",
       apiTokenSet: Boolean(process.env.MICROPAGE_API_TOKEN),
       customEndpointMappingSet: Boolean(process.env.MICROPAGE_API_ENDPOINTS_JSON || process.env.MICROPAGE_API_PROFILE_FILE),
       profileFileSet: Boolean(process.env.MICROPAGE_API_PROFILE_FILE),
+      profileFile: process.env.MICROPAGE_API_PROFILE_FILE || "",
       healthPath: process.env.MICROPAGE_API_HEALTH_PATH || "/health",
       configValid: validation.valid,
       configErrors: validation.errors
@@ -76,11 +87,20 @@ function getSystemConfig() {
       strict: componentPolicy.strict,
       allowedModules: componentPolicy.allowedModules,
       allowedComponents: componentPolicy.allowedComponents
+    },
+    componentSkins: {
+      file: componentSkinCatalog.file,
+      summary: componentSkinCatalog.summary
     }
   };
 }
 
+function getComponentSkinCatalog(options = {}) {
+  return loadComponentSkinCatalog({ rootDir: options.rootDir || process.cwd() });
+}
+
 module.exports = {
   createOrchestrator,
-  getSystemConfig
+  getSystemConfig,
+  getComponentSkinCatalog
 };

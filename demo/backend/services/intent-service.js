@@ -46,7 +46,8 @@ class IntentService {
       modules: Array.isArray(structured.modules) && structured.modules.length ? structured.modules : fallbackBase.modules,
       raw_demand: structured.raw_demand || fallbackBase.raw_demand,
       reference_analysis: reference,
-      model_fallback: Boolean(structured._modelFallback)
+      model_fallback: Boolean(structured._modelFallback),
+      model_fallback_reason: structured._fallbackReason || ""
     };
   }
 }

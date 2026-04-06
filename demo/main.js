@@ -9,6 +9,7 @@ const customThemeColorInput = document.getElementById("customThemeColor");
 const customThemeColorValue = document.getElementById("customThemeColorValue");
 const referenceInput = document.getElementById("reference");
 const referenceFileName = document.getElementById("referenceFileName");
+const requireModelToggle = document.getElementById("requireModelToggle");
 
 const aiPanel = document.getElementById("aiPanel");
 const aiFeed = document.getElementById("aiFeed");
@@ -36,6 +37,17 @@ const buildMeta = document.getElementById("buildMeta");
 const buildSteps = document.getElementById("buildSteps");
 const buildRawDetails = document.getElementById("buildRawDetails");
 const buildRawOutput = document.getElementById("buildRawOutput");
+const runtimeConfigForm = document.getElementById("runtimeConfigForm");
+const cfgModelProvider = document.getElementById("cfgModelProvider");
+const cfgModelName = document.getElementById("cfgModelName");
+const cfgModelBaseUrl = document.getElementById("cfgModelBaseUrl");
+const cfgModelApiKey = document.getElementById("cfgModelApiKey");
+const cfgAdapterMode = document.getElementById("cfgAdapterMode");
+const cfgApiBase = document.getElementById("cfgApiBase");
+const cfgApiToken = document.getElementById("cfgApiToken");
+const runtimeConfigStatus = document.getElementById("runtimeConfigStatus");
+const runPreflightButton = document.getElementById("runPreflightButton");
+const runtimePreflightSummary = document.getElementById("runtimePreflightSummary");
 
 let latestReferenceAnalysis = null;
 let latestDraftData = null;
@@ -43,6 +55,9 @@ let latestBuildStatus = null;
 let latestBuildRun = null;
 let currentBuildJobId = null;
 let buildPollTimer = null;
+let componentSkinCatalog = null;
+let latestSystemConfig = null;
+let latestPreflight = null;
 
 themeColorModeInputs.forEach((input) => {
   input.addEventListener("change", syncThemeColorMode);
@@ -58,9 +73,23 @@ referenceInput.addEventListener("change", async () => {
   renderReference(null);
   renderAiExperience();
 });
+demandInput.addEventListener("input", () => {
+  syncStartBuildAvailability();
+});
 
 syncThemeColorMode();
 renderAiExperience();
+loadComponentSkinCatalog();
+loadSystemConfig().then(() => runPreflightCheck({ strict: true, silent: true }));
+syncStartBuildAvailability();
+restoreRequireModelPreference();
+
+if (runtimeConfigForm) {
+  runtimeConfigForm.addEventListener("submit", saveRuntimeConfig);
+}
+if (runPreflightButton) {
+  runPreflightButton.addEventListener("click", () => runPreflightCheck({ strict: true, silent: false }));
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -83,32 +112,13 @@ form.addEventListener("submit", async (event) => {
       style: styleInput.value,
       themeColorMode: getThemeColorMode(),
       customThemeColor: customThemeColorInput.value,
-      reference
+      reference,
+      require_model: getRequireModelEnabled()
     };
 
-    const intentResponse = await fetch("/v1/intent/parse", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!intentResponse.ok) throw new Error("意图解析失败");
-    const intentData = await intentResponse.json();
-
-    const designResponse = await fetch("/v1/design/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ intent: intentData.parsed })
-    });
-    if (!designResponse.ok) throw new Error("设计生成失败");
-    const designData = await designResponse.json();
-
-    const assetsResponse = await fetch("/v1/assets/generate-and-upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ design_id: designData.design_id })
-    });
-    if (!assetsResponse.ok) throw new Error("素材生成失败");
-    const assetsData = await assetsResponse.json();
+    const intentData = await postJson("/v1/intent/parse", payload, "意图解析失败");
+    const designData = await postJson("/v1/design/generate", { intent: intentData.parsed, require_model: getRequireModelEnabled() }, "设计生成失败");
+    const assetsData = await postJson("/v1/assets/generate-and-upload", { design_id: designData.design_id }, "素材生成失败");
 
     latestReferenceAnalysis = designData.parsed?.reference_analysis || null;
     latestDraftData = {
@@ -142,37 +152,109 @@ form.addEventListener("submit", async (event) => {
 });
 
 startBuildButton.addEventListener("click", async () => {
-  if (!latestDraftData) return;
+  if (!String(demandInput.value || "").trim()) {
+    latestBuildStatus = {
+      state: "failed",
+      message: "请先输入页面需求",
+      currentStep: "等待输入需求",
+      logs: ["页面需求为空，无法启动自动搭建"],
+      events: [
+        {
+          stage: "runtime_execution",
+          title: "启动前校验失败",
+          message: "请先输入页面需求",
+          status: "failed",
+          kind: "warning"
+        }
+      ]
+    };
+    renderAiExperience();
+    return;
+  }
 
-  const buildRun = createBuildRun(latestDraftData);
-  latestBuildRun = buildRun;
-  persistBuildRun(buildRun);
   startBuildButton.disabled = true;
+  startBuildButton.textContent = "AI 正在生成并执行...";
+
+  const pendingBuildRun = createBuildRun(latestDraftData || createDraftFallbackFromForm(), null);
+  latestBuildRun = pendingBuildRun;
+  persistBuildRun(pendingBuildRun);
+  latestBuildStatus = {
+    state: "running",
+    message: "请求已发送，AI 正在生成设计稿并启动自动搭建",
+    currentStep: "提交自动搭建请求",
+    logs: ["已发送 /v1/page/auto-build 请求"],
+    events: [
+      {
+        stage: "runtime_execution",
+        title: "请求已提交",
+        message: "AI 正在生成设计稿并准备执行，请稍候（首次可能需要 10-30 秒）",
+        status: "running",
+        kind: "insight"
+      }
+    ]
+  };
+  renderBuildRun(pendingBuildRun, latestBuildStatus);
 
   try {
-    const response = await fetch("/v1/page/execute", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        design_id: latestDraftData.design_id,
-        draft: latestDraftData,
-        auto_publish: true,
-        auth_level: "service_account"
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error("启动失败");
+    const runtimeMode = await ensureRuntimeModeReadyForBuild();
+    if (runtimeMode === "ui_only") {
+      latestBuildStatus = {
+        state: "running",
+        message: "当前为 UI 自动化模式，AI 将尝试直接在后台界面执行创建",
+        currentStep: "准备 UI 自动化执行",
+        logs: ["MICROPAGE_ADAPTER_MODE=ui_only"],
+        events: [
+          {
+            stage: "runtime_execution",
+            title: "执行模式确认",
+            message: "检测到 UI 自动化模式，已跳过 API 创建链路。",
+            status: "running",
+            kind: "insight"
+          }
+        ]
+      };
+      renderBuildRun(pendingBuildRun, latestBuildStatus);
     }
 
-    const result = await response.json();
+    const reference = await buildReferencePayload(referenceInput.files[0]);
+    const payload = {
+      demand: demandInput.value,
+      industry: industryInput.value,
+      goal: goalInput.value,
+      style: styleInput.value,
+      themeColorMode: getThemeColorMode(),
+      customThemeColor: customThemeColorInput.value,
+      reference,
+      require_model: getRequireModelEnabled(),
+      auto_publish: true,
+      auth_level: "service_account"
+    };
+
+    const result = await postJson("/v1/page/auto-build", payload, "启动失败");
+    const returnedDraft = normalizeDraftFromAutoBuild(result);
+    if (returnedDraft) {
+      latestReferenceAnalysis = returnedDraft.parsed?.reference_analysis || null;
+      latestDraftData = returnedDraft;
+      render(latestDraftData);
+      startBuildButton.disabled = true;
+    }
+
+    const buildRun = createBuildRun(latestDraftData || returnedDraft || {}, result.run_id);
+    latestBuildRun = buildRun;
+    persistBuildRun(buildRun);
+
     currentBuildJobId = result.run_id;
-    latestBuildStatus = result;
+    latestBuildStatus = result.execute || {
+      run_id: result.run_id,
+      state: result.state || "running",
+      message: "已开始自动执行",
+      currentStep: "准备执行",
+      events: []
+    };
     renderBuildRun(buildRun, latestBuildStatus);
     pollBuildStatus(buildRun);
   } catch (error) {
+    const buildRun = createBuildRun(latestDraftData || {}, null);
     latestBuildStatus = {
       state: "failed",
       message: "启动失败，请确认本地服务已启动后重试",
@@ -190,7 +272,8 @@ startBuildButton.addEventListener("click", async () => {
       ]
     };
     renderBuildRun(buildRun, latestBuildStatus);
-    startBuildButton.disabled = false;
+    syncStartBuildAvailability();
+    startBuildButton.textContent = "自动搭建并发布";
   }
 });
 
@@ -199,13 +282,14 @@ function render(data) {
   details.hidden = false;
   buildPanel.hidden = true;
   buildRawDetails.hidden = true;
-  startBuildButton.disabled = false;
+  syncStartBuildAvailability();
 
   summary.innerHTML = [
     renderSummaryCard("页面目标", data.parsed.page_goal),
     renderSummaryCard("风格判断", data.parsed.style),
     renderSummaryCard("主题色策略", data.parsed.theme_color_label),
     renderSummaryCard("模板选择", data.template.name),
+    renderSummaryCard("AI 生成状态", renderAiGenerationState(data), true),
     renderSummaryCard("可落地程度", renderBadge(data.validation.level), true),
     renderSummaryCard("参考图", data.parsed.reference_image || "未上传"),
     renderSummaryCard("AI 图片素材", data.generatedAssets?.length ? `${data.generatedAssets.length} 张` : "当前无需")
@@ -236,193 +320,442 @@ function render(data) {
 }
 
 function renderPagePreview(data) {
-  if (!data?.pageStructure?.length) {
+  const previewComponents = buildPreviewComponents(data);
+  if (!previewComponents.length) {
     pagePreviewPanel.hidden = true;
     pagePreview.innerHTML = "";
     return;
   }
 
+  const previewTheme = resolvePreviewTheme(data);
   pagePreviewPanel.hidden = false;
+  const skinSummary = componentSkinCatalog?.summary;
+  const skinHint = skinSummary
+    ? `已配置组件皮肤 ${skinSummary.withScreenshot}/${skinSummary.total}`
+    : "组件皮肤配置加载中";
   pagePreview.innerHTML = `
     <div class="page-preview-phone">
       <div class="page-preview-screen">
         <div class="page-preview-status">
-          <span>09:41</span>
+          <span>组件样式预估</span>
           <div class="page-preview-status-dots"><span></span><span></span><span></span></div>
         </div>
-        <div class="page-preview-canvas">
-          ${data.pageStructure.map((block, index) => renderPreviewBlock(block, index, data)).join("")}
+        <div class="page-preview-canvas" style="background: linear-gradient(180deg, ${escapeHtml(previewTheme.surfaceStart)}, ${escapeHtml(previewTheme.surfaceEnd)});">
+          <div class="page-preview-meta">按后台组件 key 渲染：${escapeHtml(previewComponents.map((item) => item.component).join("、"))}<br/>${escapeHtml(skinHint)}</div>
+          ${previewComponents.map((component, index) => renderPreviewComponent(component, index, data, previewTheme)).join("")}
         </div>
       </div>
     </div>
   `;
 }
 
-function renderPreviewBlock(block, index, data) {
+function buildPreviewComponents(data) {
+  const componentPlan = Array.isArray(data?.componentPlan) ? data.componentPlan : [];
+  if (componentPlan.length) return componentPlan;
+  const pageStructure = Array.isArray(data?.pageStructure) ? data.pageStructure : [];
+  return pageStructure.map((block) => ({
+    module: block.type,
+    component: block.type,
+    displayName: block.type,
+    status: "fallback",
+    reason: block.purpose,
+    fields: []
+  }));
+}
+
+function renderPreviewComponent(component, index, data, previewTheme) {
   const themeColor = data.parsed.theme_color_value || "#8C4B2F";
   const bannerAsset = (data.generatedAssets || []).find((item) => item.componentModule === "banner" || item.componentDisplayName === "图文广告");
-  const previewProducts = createPreviewProducts(data.parsed.page_goal);
+  const previewProducts = createPreviewProducts(data.parsed.page_goal, data.parsed.raw_demand, data.parsed.style);
+  const stateLabel = resolveComponentStateLabel(component.status);
+  const reasonText = component.reason || "已使用组件默认配置";
+  const skin = resolveComponentSkin(component.component);
+  const primaryTone = previewTheme?.primary || themeColor;
+  const secondaryTone = previewTheme?.secondary || lightenHex(themeColor, 0.74);
+  const copy = data.copyDraft || {};
+  const fieldChips = Array.isArray(component.fields) && component.fields.length
+    ? component.fields.map((field) => `<span class="page-preview-field-chip">${escapeHtml(field)}</span>`).join("")
+    : `<span class="page-preview-field-chip">默认字段</span>`;
 
-  if (block.type === "banner") {
-    return `
-      <section class="page-preview-block page-preview-banner">
-        ${bannerAsset
-          ? `<img src="${escapeHtml(bannerAsset.publicUrl)}" alt="${escapeHtml(bannerAsset.title)}" />`
-          : `
-            <div class="page-preview-banner-fallback" style="background: linear-gradient(145deg, ${escapeHtml(lightenHex(themeColor, 0.68))}, ${escapeHtml(lightenHex(themeColor, 0.22))});">
-              <span class="page-preview-badge">${escapeHtml(data.parsed.style)}</span>
-              <div class="page-preview-banner-copy">
-                <strong>${escapeHtml(resolvePreviewHeadline(data.parsed.page_goal))}</strong>
-                <span>${escapeHtml(data.parsed.raw_demand || "AI 正在根据需求搭建页面结构与视觉节奏。")}</span>
-              </div>
-            </div>`}
-      </section>
+  let body = "";
+  if (skin?.screenshot) {
+    const slots = (skin.slots || []).length
+      ? `<div class="page-preview-skin-slots">${skin.slots.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
+      : "";
+    body = `
+      <div class="page-preview-skin-frame">
+        <img src="${escapeHtml(skin.screenshot)}" alt="${escapeHtml(`${skin.name || component.displayName} 真实组件截图`)}" style="object-fit:${escapeHtml(skin.fit || "cover")};" />
+      </div>
+      ${slots}
+      ${skin.notes ? `<div class="page-preview-skin-note">${escapeHtml(skin.notes)}</div>` : ""}
     `;
+  } else if (skin && !skin.available) {
+    body = `<div class="page-preview-placeholder">组件皮肤已配置但截图未找到：${escapeHtml(skin.screenshot || "未设置路径")}</div>`;
   }
 
-  if (block.type === "benefit_bar") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-benefits">
-          ${[
-            ["限时福利", "爆款直降"],
-            ["满减叠加", "券后更省"],
-            ["即时承接", "下单入口"]
-          ]
-            .map(
-              ([title, desc]) => `
-                <article class="page-preview-benefit">
-                  <div class="page-preview-benefit-mark" style="background:${escapeHtml(lightenHex(themeColor, 0.76))};"></div>
-                  <strong>${escapeHtml(title)}</strong>
-                  <span>${escapeHtml(desc)}</span>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  if (block.type === "coupon") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-coupon">
-          <div>
-            <strong>满 199 减 40</strong>
-            <span>叠加专区商品，限今日可用</span>
+  if (!body && component.component === "banner") {
+    body = bannerAsset
+      ? `<div class="page-preview-banner-stage"><img src="${escapeHtml(bannerAsset.publicUrl)}" alt="${escapeHtml(bannerAsset.title)}" /></div>`
+      : `<div class="page-preview-banner-fallback" style="background: linear-gradient(145deg, ${escapeHtml(lightenHex(secondaryTone, 0.42))}, ${escapeHtml(lightenHex(primaryTone, 0.12))});">
+          <span class="page-preview-badge">${escapeHtml(data.parsed.style)}</span>
+          <div class="page-preview-banner-copy">
+            <strong>${escapeHtml(copy.headline || resolvePreviewHeadline(data.parsed.page_goal))}</strong>
+            <span>${escapeHtml(copy.subheadline || data.parsed.raw_demand || "等待素材生成后自动填充主图")}</span>
           </div>
-          <button type="button">立即领取</button>
+          <button type="button" class="page-preview-nav-item">${escapeHtml(copy.cta || "立即查看")}</button>
+        </div>`;
+  } else if (!body && component.component === "coupon") {
+    const couponText = resolveCouponPreview(data.parsed.raw_demand, data.parsed.style);
+    body = `
+      <div class="page-preview-coupon">
+        <div>
+          <strong>${escapeHtml(couponText)}</strong>
+          <span>组件：coupon，支持批量券包回填</span>
         </div>
-      </section>
+        <button type="button">去领取</button>
+      </div>
     `;
-  }
-
-  if (block.type === "countdown") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-section-title">
-          <strong>限时抢购</strong>
-          <span>03 : 21 : 48</span>
-        </div>
-      </section>
-    `;
-  }
-
-  if (block.type === "product_grid") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-section-title">
-          <strong>AI 推荐商品</strong>
-          <span>${escapeHtml(data.template.name)}</span>
-        </div>
-        <div class="page-preview-product-grid">
-          ${previewProducts
-            .map(
-              (item, productIndex) => `
-                <article class="page-preview-product">
-                  <div class="page-preview-product-image" style="background:
-                    radial-gradient(circle at 72% 22%, ${escapeHtml(lightenHex(themeColor, 0.74))} 0, transparent 34%),
-                    linear-gradient(145deg, #ffffff, ${escapeHtml(lightenHex(themeColor, productIndex % 2 === 0 ? 0.88 : 0.8))});"></div>
-                  <div class="page-preview-product-copy">
-                    <strong>${escapeHtml(item.name)}</strong>
-                    <div class="page-preview-product-meta">
-                      <span class="page-preview-product-price">${escapeHtml(item.price)}</span>
-                      <span class="page-preview-product-tag">${escapeHtml(item.tag)}</span>
-                    </div>
+  } else if (!body && component.component === "product") {
+    body = `
+      <div class="page-preview-product-grid">
+        ${previewProducts
+          .slice(0, 4)
+          .map(
+            (item, productIndex) => `
+              <article class="page-preview-product">
+                <div class="page-preview-product-image" style="background:
+                  radial-gradient(circle at 72% 22%, ${escapeHtml(lightenHex(secondaryTone, 0.54))} 0, transparent 34%),
+                  linear-gradient(145deg, #ffffff, ${escapeHtml(lightenHex(primaryTone, productIndex % 2 === 0 ? 0.88 : 0.8))});"></div>
+                <div class="page-preview-product-copy">
+                  <strong>${escapeHtml(item.name)}</strong>
+                  <div class="page-preview-product-meta">
+                    <span class="page-preview-product-price">${escapeHtml(item.price)}</span>
+                    <span class="page-preview-product-tag">${escapeHtml(item.tag)}</span>
                   </div>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-      </section>
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
     `;
-  }
-
-  if (block.type === "search_entry") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-section-title">
-          <strong>搜索专区</strong>
-          <span>Search</span>
-        </div>
-        <div class="page-preview-richtext">搜索爆款、优惠专区或品牌关键词，快速进入目标商品。</div>
-      </section>
+  } else if (!body && component.component === "search") {
+    body = `
+      <div class="page-preview-search">
+        <span>搜索框组件</span>
+        <strong>${escapeHtml(resolveSearchHint(data.parsed.raw_demand))}</strong>
+      </div>
     `;
-  }
-
-  if (block.type === "live_room") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-section-title">
-          <strong>直播精选</strong>
-          <span>Live</span>
-        </div>
-        <div class="page-preview-mini-grid">
-          ${Array.from({ length: 4 }, (_, liveIndex) => `
-            <article class="page-preview-mini-card">
-              <div class="page-preview-mini-thumb" style="background:${escapeHtml(lightenHex(themeColor, 0.78 - liveIndex * 0.04))};"></div>
-              <span>直播卡片 ${liveIndex + 1}</span>
-            </article>
-          `).join("")}
-        </div>
-      </section>
+  } else if (!body && component.component === "linkNav") {
+    const navItems = resolveNavItems(data.parsed.raw_demand, data.parsed.page_goal);
+    body = `
+      <div class="page-preview-nav-grid">
+        ${navItems.map((item) => `<button type="button" class="page-preview-nav-item">${escapeHtml(item)}</button>`).join("")}
+      </div>
     `;
-  }
-
-  if (block.type === "member_form" || block.type === "event_form") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-section-title">
-          <strong>${escapeHtml(block.purpose)}</strong>
-          <span>Form</span>
-        </div>
-        <div class="page-preview-richtext">AI 已预留表单承接位，便于后续接入会员办理或活动报名流程。</div>
-      </section>
+  } else if (!body && component.component === "limit") {
+    body = `
+      <div class="page-preview-section-title">
+        <strong>限时优惠组件</strong>
+        <span>03 : 21 : 48</span>
+      </div>
     `;
-  }
-
-  if (block.type === "cta") {
-    return `
-      <section class="page-preview-block">
-        <div class="page-preview-cta">
-          <strong>${escapeHtml(resolvePreviewHeadline(data.parsed.page_goal))}</strong>
-          <button type="button">立即进入活动</button>
-        </div>
-      </section>
+  } else if (!body && component.component === "title") {
+    body = `
+      <div class="page-preview-richtext">
+        <strong>标题文字组件</strong><br/>
+        用于承接利益点、分区标题或说明文案。
+      </div>
     `;
+  } else if (!body && (component.component === "handleMember" || component.component === "bookEvent")) {
+    body = `
+      <div class="page-preview-form-card">
+        <strong>${escapeHtml(component.displayName)}</strong>
+        <span>${escapeHtml(copy.subheadline || "组件已预留业务 ID 与跳转配置位")}</span>
+        <button type="button">${escapeHtml(copy.cta || (component.component === "handleMember" ? "立即开通会员" : "立即报名活动"))}</button>
+      </div>
+    `;
+  } else if (!body && component.component === "videoChannel") {
+    body = `
+      <div class="page-preview-mini-grid">
+        ${Array.from({ length: 4 }, (_, liveIndex) => `
+          <article class="page-preview-mini-card">
+            <div class="page-preview-mini-thumb" style="background:${escapeHtml(lightenHex(primaryTone, 0.78 - liveIndex * 0.04))};"></div>
+            <span>直播卡片 ${liveIndex + 1}</span>
+          </article>
+        `).join("")}
+      </div>
+    `;
+  } else if (!body) {
+    body = `<div class="page-preview-placeholder">${escapeHtml(reasonText)}</div>`;
   }
 
   return `
-    <section class="page-preview-block">
-      <div class="page-preview-section-title">
-        <strong>${escapeHtml(block.type)}</strong>
-        <span>${String(index + 1).padStart(2, "0")}</span>
+    <section class="page-preview-block page-preview-component ${component.status === "unresolved" ? "page-preview-component--unresolved" : ""}" style="border-color:${escapeHtml(lightenHex(primaryTone, 0.62))};">
+      <div class="page-preview-component-head">
+        <div class="page-preview-component-title">
+          <strong>${escapeHtml(component.displayName || `组件 ${index + 1}`)}</strong>
+          <span>key: ${escapeHtml(component.component || "unknown")} · module: ${escapeHtml(component.module || "-")}</span>
+        </div>
+        <span class="page-preview-component-state">${escapeHtml(stateLabel)}</span>
       </div>
-      <div class="page-preview-richtext">${escapeHtml(block.purpose)}</div>
+      ${body}
+      <div class="page-preview-field-chips">${fieldChips}</div>
     </section>
   `;
+}
+
+function resolveComponentStateLabel(status) {
+  if (status === "direct") return "可自动落地";
+  if (status === "fallback") return "降级映射";
+  if (status === "unresolved") return "需人工处理";
+  return "待确认";
+}
+
+function resolveComponentSkin(componentKey) {
+  if (!componentSkinCatalog?.components || !componentKey) return null;
+  return componentSkinCatalog.components[componentKey] || null;
+}
+
+async function loadComponentSkinCatalog() {
+  try {
+    const response = await fetch("/v1/system/component-skins");
+    if (!response.ok) return;
+    const data = await response.json();
+    componentSkinCatalog = data?.skins || null;
+    if (latestDraftData) {
+      renderPagePreview(latestDraftData);
+    }
+  } catch {
+    componentSkinCatalog = null;
+  }
+}
+
+async function loadSystemConfig() {
+  try {
+    const response = await fetch("/v1/system/config");
+    if (!response.ok) return;
+    const data = await response.json();
+    latestSystemConfig = data?.system || null;
+    renderRuntimeConfigForm(latestSystemConfig);
+  } catch {
+    latestSystemConfig = null;
+  }
+}
+
+async function saveRuntimeConfig(event) {
+  event.preventDefault();
+  if (!runtimeConfigForm) return;
+
+  const payload = {
+    model: {
+      provider: cfgModelProvider?.value || "",
+      name: cfgModelName?.value || "",
+      baseUrl: cfgModelBaseUrl?.value || "",
+      apiKey: cfgModelApiKey?.value || ""
+    },
+    adapter: {
+      mode: cfgAdapterMode?.value || "",
+      apiBase: cfgApiBase?.value || "",
+      apiToken: cfgApiToken?.value || ""
+    }
+  };
+
+  try {
+    const saveButton = document.getElementById("saveRuntimeConfigButton");
+    if (saveButton) saveButton.disabled = true;
+    setRuntimeConfigStatus("正在保存配置...", false);
+
+    const response = await fetch("/v1/system/config/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error("配置保存失败");
+
+    const data = await response.json();
+    latestSystemConfig = data?.system || null;
+    renderRuntimeConfigForm(latestSystemConfig);
+    cfgModelApiKey.value = "";
+    cfgApiToken.value = "";
+    await runPreflightCheck({ strict: true, silent: true });
+    setRuntimeConfigStatus(
+      `已保存并生效：provider=${latestSystemConfig?.model?.provider || "-"}，mode=${latestSystemConfig?.adapter?.mode || "-"}，预检=${latestPreflight?.ok ? "通过" : "未通过"}`,
+      !latestPreflight?.ok
+    );
+    syncStartBuildAvailability();
+  } catch (error) {
+    setRuntimeConfigStatus(`保存失败：${error.message || "unknown_error"}`, true);
+  } finally {
+    const saveButton = document.getElementById("saveRuntimeConfigButton");
+    if (saveButton) saveButton.disabled = false;
+  }
+}
+
+function renderRuntimeConfigForm(systemConfig) {
+  if (!runtimeConfigForm) return;
+  const model = systemConfig?.model || {};
+  const adapter = systemConfig?.adapter || {};
+
+  if (cfgModelProvider) cfgModelProvider.value = String(model.provider || "gemini");
+  if (cfgModelName) cfgModelName.value = String(model.name || "");
+  if (cfgModelBaseUrl) cfgModelBaseUrl.value = String(model.baseUrl || "");
+  if (cfgAdapterMode) cfgAdapterMode.value = String(adapter.mode || "ui_only");
+  if (cfgApiBase) cfgApiBase.value = String(adapter.apiBase || "");
+  if (cfgApiToken) cfgApiToken.value = "";
+  setRuntimeConfigStatus(
+    `当前运行态：provider=${model.provider || "-"}，mode=${adapter.mode || "-"}，hasApiKey=${model.hasApiKey ? "true" : "false"}`,
+    false
+  );
+  renderRuntimeDiagnostics();
+}
+
+function setRuntimeConfigStatus(message, isError) {
+  if (!runtimeConfigStatus) return;
+  runtimeConfigStatus.textContent = message;
+  runtimeConfigStatus.style.color = isError ? "#b42318" : "";
+}
+
+async function postJson(url, payload, fallbackMessage = "请求失败") {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.message || fallbackMessage);
+  }
+  return data;
+}
+
+function getRequireModelEnabled() {
+  return Boolean(requireModelToggle?.checked);
+}
+
+function restoreRequireModelPreference() {
+  if (!requireModelToggle) return;
+  const stored = localStorage.getItem("requireModelToggle");
+  if (stored === "0") requireModelToggle.checked = false;
+  requireModelToggle.addEventListener("change", () => {
+    localStorage.setItem("requireModelToggle", requireModelToggle.checked ? "1" : "0");
+  });
+}
+
+async function runPreflightCheck({ strict = true, silent = false } = {}) {
+  try {
+    if (runPreflightButton) runPreflightButton.disabled = true;
+    const response = await fetch("/v1/system/preflight", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strict })
+    });
+    if (!response.ok) {
+      throw new Error(`preflight_request_failed:${response.status}`);
+    }
+    latestPreflight = await response.json();
+    renderRuntimeDiagnostics();
+
+    if (!silent) {
+      setRuntimeConfigStatus(
+        latestPreflight.ok ? "系统预检通过，可执行自动搭建。" : "系统预检未通过，请先根据下方检查项修复。",
+        !latestPreflight.ok
+      );
+    }
+    return latestPreflight;
+  } catch (error) {
+    latestPreflight = {
+      ok: false,
+      checks: [
+        {
+          name: "preflight_request",
+          ok: false,
+          message: error.message || "预检请求失败"
+        }
+      ]
+    };
+    renderRuntimeDiagnostics();
+    if (!silent) {
+      setRuntimeConfigStatus(`预检失败：${error.message || "unknown_error"}`, true);
+    }
+    return latestPreflight;
+  } finally {
+    if (runPreflightButton) runPreflightButton.disabled = false;
+  }
+}
+
+function renderRuntimeDiagnostics() {
+  if (!runtimePreflightSummary) return;
+  const model = latestSystemConfig?.model || {};
+  const adapter = latestSystemConfig?.adapter || {};
+  const rollout = latestSystemConfig?.rollout || {};
+  const preflight = latestPreflight;
+  const checks = Array.isArray(preflight?.checks) ? preflight.checks : [];
+  const modelChecks = Array.isArray(preflight?.model?.checks) ? preflight.model.checks : [];
+  const mergedChecks = [
+    ...checks.map((item) => ({ ...item, name: `adapter.${item.name || "check"}` })),
+    ...modelChecks.map((item) => ({ ...item, name: `model.${item.name || "check"}` }))
+  ];
+
+  const checkHtml = mergedChecks.length
+    ? mergedChecks
+        .map((item) => `<li><span class="${item.ok ? "ok" : "bad"}">${item.ok ? "通过" : "失败"}</span> · ${escapeHtml(item.name || "check")}：${escapeHtml(item.message || "")}</li>`)
+        .join("")
+    : `<li><span class="bad">未执行</span> · 还没有预检结果</li>`;
+
+  const tenantAllowlist = Array.isArray(rollout.tenantAllowlist) && rollout.tenantAllowlist.length
+    ? rollout.tenantAllowlist.join(", ")
+    : "未设置";
+  const uiOnlyHint = adapter.mode === "ui_only"
+    ? "UI 自动化模式下，请保持浏览器前台并授权系统自动化控制（macOS 需在系统设置允许终端/Node 控制浏览器）。"
+    : "";
+
+  runtimePreflightSummary.innerHTML = `
+    <div class="runtime-preflight-head">
+      <strong>可执行性诊断</strong>
+      ${preflight ? renderInlineStatusBadge(preflight.ok ? "done" : "failed") : renderInlineStatusBadge("running")}
+    </div>
+    <p class="runtime-preflight-text">模型：${escapeHtml(model.provider || "-")} / ${escapeHtml(model.name || "-")}；有无 Key：${model.hasApiKey ? "是" : "否"}；Base URL：${escapeHtml(model.baseUrl || "-")}</p>
+    <p class="runtime-preflight-text">模式：${escapeHtml(adapter.mode || "-")}；API Base：${adapter.apiBaseSet ? "已配置" : "未配置"}；API Token：${adapter.apiTokenSet ? "已配置" : "未配置"}</p>
+    <p class="runtime-preflight-text">发布策略：自动发布总开关=${rollout.enableRealAutoPublish ? "开" : "关"}；租户白名单=${escapeHtml(tenantAllowlist)}</p>
+    ${uiOnlyHint ? `<p class="runtime-preflight-text">${escapeHtml(uiOnlyHint)}</p>` : ""}
+    <ul class="runtime-preflight-list">${checkHtml}</ul>
+  `;
+}
+
+async function ensureRuntimeModeReadyForBuild() {
+  await loadSystemConfig();
+  const preflight = await runPreflightCheck({ strict: true, silent: true });
+  const adapter = latestSystemConfig?.adapter || {};
+  const mode = String(adapter.mode || "mock");
+  const apiBaseSet = Boolean(adapter.apiBaseSet);
+  const apiTokenSet = Boolean(adapter.apiTokenSet);
+
+  if (mode === "mock") {
+    throw new Error("当前运行在 mock 模式：只会模拟执行，不会真实创建微页面。请切换到 real 或 ui_only 模式。");
+  }
+
+  if (mode === "real" && (!apiBaseSet || !apiTokenSet)) {
+    throw new Error("当前是 real 模式但缺少 MICROPAGE_API_BASE 或 MICROPAGE_API_TOKEN，无法真实创建微页面。");
+  }
+
+  if (mode === "real" && preflight && !preflight.ok) {
+    const failedChecks = (preflight.checks || [])
+      .filter((item) => item && item.ok === false)
+      .map((item) => item.message)
+      .filter(Boolean);
+    throw new Error(`real 模式预检未通过：${failedChecks.join("；") || "请检查系统配置"}`);
+  }
+
+  if (getRequireModelEnabled() && preflight?.model && !preflight.model.ok) {
+    const modelErrors = (preflight.model.checks || [])
+      .filter((item) => item && item.ok === false)
+      .map((item) => item.message)
+      .filter(Boolean);
+    throw new Error(`当前启用了“必须使用大模型”，但模型预检失败：${modelErrors.join("；") || "请检查模型网关与 API Key"}`);
+  }
+
+  return mode;
 }
 
 function createPreviewProducts(pageGoal) {
@@ -458,6 +791,59 @@ function resolvePreviewHeadline(pageGoal) {
   if (pageGoal === "会员拉新") return "现在开卡，立刻解锁专属权益";
   if (pageGoal === "活动推广") return "活动名额有限，先报名先锁福利";
   return "限时好价上新，爆款一页直达";
+}
+
+function resolvePreviewTheme(data) {
+  const base = data?.parsed?.theme_color_value || "#8C4B2F";
+  const style = String(data?.parsed?.style || "").trim();
+  if (style.includes("大促")) {
+    return {
+      primary: "#B42318",
+      secondary: lightenHex("#B42318", 0.58),
+      surfaceStart: "#fff7f5",
+      surfaceEnd: "#ffe8e1"
+    };
+  }
+  if (style.includes("清新")) {
+    return {
+      primary: "#0F766E",
+      secondary: lightenHex("#0F766E", 0.55),
+      surfaceStart: "#f3fffb",
+      surfaceEnd: "#def7ef"
+    };
+  }
+  return {
+    primary: base,
+    secondary: lightenHex(base, 0.48),
+    surfaceStart: lightenHex(base, 0.93),
+    surfaceEnd: lightenHex(base, 0.84)
+  };
+}
+
+function resolveCouponPreview(demand, style) {
+  const token = String(demand || "");
+  const explicit = token.match(/满\s*([0-9]{2,4})\s*减\s*([0-9]{1,4})/);
+  if (explicit) return `满 ${explicit[1]} 减 ${explicit[2]}`;
+  if (token.includes("双十一")) return "满 399 减 120";
+  if (token.includes("团购")) return "2 件 8 折 · 3 件 7 折";
+  if (String(style || "").includes("大促")) return "满 299 减 80";
+  return "满 199 减 40";
+}
+
+function resolveSearchHint(demand) {
+  const token = String(demand || "");
+  if (token.includes("母婴")) return "搜索母婴爆款";
+  if (token.includes("美妆")) return "搜索美妆爆款";
+  if (token.includes("双十一")) return "搜索双十一会场商品";
+  return "请输入商品关键词";
+}
+
+function resolveNavItems(demand, goal) {
+  const token = String(demand || "");
+  if (token.includes("团购")) return ["团购专区", "优惠会场", "限时秒杀", "新客专享"];
+  if (goal === "会员拉新") return ["会员权益", "开卡有礼", "积分兑换", "品牌故事"];
+  if (goal === "活动推广") return ["活动日程", "报名入口", "活动规则", "往期回顾"];
+  return ["爆款专区", "优惠会场", "新品首发", "品牌故事"];
 }
 
 function lightenHex(hex, amount) {
@@ -570,6 +956,18 @@ function buildDraftActivities(data) {
         ? "当前方案可以继续推进，但存在替代实现或组件边界，执行时需要留意风险。"
         : "当前方案还有未覆盖项，建议先补齐缺失模块，再继续自动搭建。";
 
+  const intentFallback = Boolean(data.parsed?.model_fallback);
+  const blueprintFallback = Boolean(data.designBlueprint?.modelFallback);
+  const copyFallback = Boolean(data.copyDraft?.modelFallback);
+  const hasModelFallback = intentFallback || blueprintFallback || copyFallback;
+  const fallbackReasons = [
+    data.parsed?.model_fallback_reason,
+    data.designBlueprint?.modelFallbackReason,
+    data.copyDraft?.modelFallbackReason
+  ]
+    .filter((item) => Boolean(String(item || "").trim()))
+    .filter((item, index, arr) => arr.indexOf(item) === index);
+
   return [
     {
       stage: "intent",
@@ -645,7 +1043,24 @@ function buildDraftActivities(data) {
         moduleCount: data.pageStructure.length,
         componentCount: data.componentPlan.length
       }
-    }
+    },
+    ...(hasModelFallback
+      ? [
+          {
+            stage: "validation",
+            title: "模型调用降级提醒",
+            message: `本次请求部分环节未成功调用大模型，已自动降级到规则模板，因此不同提示词的页面差异会变小。`,
+            status: "degraded",
+            kind: "warning",
+            details: {
+              intentFallback,
+              blueprintFallback,
+              copyFallback,
+              reasons: fallbackReasons
+            }
+          }
+        ]
+      : [])
   ];
 }
 
@@ -719,6 +1134,15 @@ function renderSummaryCard(label, value, allowHtml = false) {
   `;
 }
 
+function renderAiGenerationState(data) {
+  const intentFallback = Boolean(data.parsed?.model_fallback);
+  const blueprintFallback = Boolean(data.designBlueprint?.modelFallback);
+  const copyFallback = Boolean(data.copyDraft?.modelFallback);
+  const fallback = intentFallback || blueprintFallback || copyFallback;
+  if (!fallback) return '<span class="badge ok">已使用大模型</span>';
+  return '<span class="badge warn">部分降级到规则模板</span>';
+}
+
 function renderBadge(level) {
   if (level === "ok") return '<span class="badge ok">通过</span>';
   if (level === "warn") return '<span class="badge warn">通过（有替代）</span>';
@@ -761,14 +1185,47 @@ function syncThemeColorMode() {
   customThemeColorValue.textContent = customThemeColorInput.value.toUpperCase();
 }
 
-function createBuildRun(data) {
-  const components = data.componentPlan.map((item) => item.displayName);
+function syncStartBuildAvailability() {
+  const hasDemand = Boolean(String(demandInput.value || "").trim());
+  startBuildButton.disabled = !hasDemand;
+  if (!startBuildButton.disabled) {
+    startBuildButton.textContent = "自动搭建并发布";
+  }
+}
+
+function createDraftFallbackFromForm() {
   return {
-    runId: `build_${Date.now()}`,
+    parsed: {
+      page_goal: goalInput.value || "卖货转化",
+      raw_demand: String(demandInput.value || "").trim()
+    },
+    execution: {
+      page_name: `AI-${new Date().toISOString().slice(0, 10)}`,
+      runtimeSelectors: {
+        listPage: {
+          pageUrl: "https://smp.iyouke.com/dtmall/designPage"
+        }
+      },
+      actionTemplate: []
+    },
+    componentPlan: [],
+    generatedAssets: []
+  };
+}
+
+function createBuildRun(data, runId = null) {
+  const components = Array.isArray(data.componentPlan) ? data.componentPlan.map((item) => item.displayName) : [];
+  const pageName = data.execution?.page_name || data.designBlueprint?.page_name || `AI-${Date.now()}`;
+  const pageGoal = data.parsed?.page_goal || "未知目标";
+  const backendUrl = data.execution?.runtimeSelectors?.listPage?.pageUrl || "https://smp.iyouke.com/dtmall/designPage";
+  const actionTemplate = data.execution?.actionTemplate || [];
+
+  return {
+    runId: runId || `build_${Date.now()}`,
     startedAt: new Date().toLocaleString("zh-CN"),
-    pageName: data.execution.page_name,
-    pageGoal: data.parsed.page_goal,
-    backendUrl: data.execution.runtimeSelectors.listPage.pageUrl,
+    pageName,
+    pageGoal,
+    backendUrl,
     startMode: "design_list",
     components,
     generatedAssets: data.generatedAssets || [],
@@ -781,7 +1238,47 @@ function createBuildRun(data) {
       "补默认内容",
       "保存并回列表确认"
     ],
-    actionTemplate: data.execution.actionTemplate
+    actionTemplate
+  };
+}
+
+function normalizeDraftFromAutoBuild(result) {
+  if (result?.design_draft && typeof result.design_draft === "object") {
+    return result.design_draft;
+  }
+
+  const design = result?.design;
+  if (!design || typeof design !== "object") return null;
+
+  return {
+    design_id: result.design_id,
+    parsed: result.parsed || null,
+    template: design.template || { name: "AI 设计稿" },
+    pageStructure: design.pageStructure || [],
+    componentPlan: design.componentPlan || [],
+    validation: {
+      level: "warn",
+      missing_components: [],
+      unresolved_modules: [],
+      limit_warnings: [],
+      suggestions: ["建议查看组件映射后再发布"]
+    },
+    diff: {
+      completed: [],
+      replaced: [],
+      unimplemented: [],
+      editable_tips: []
+    },
+    execution: {
+      page_name: `AI-${Date.now()}`,
+      runtimeSelectors: {
+        listPage: { pageUrl: "https://smp.iyouke.com/dtmall/designPage" }
+      },
+      actionTemplate: []
+    },
+    copyDraft: design.copyDraft || null,
+    designBlueprint: design.designBlueprint || null,
+    generatedAssets: result.assets || []
   };
 }
 
@@ -809,12 +1306,14 @@ async function pollBuildStatus(buildRun) {
       if (latestBuildStatus.state === "done" || latestBuildStatus.state === "failed" || latestBuildStatus.state === "blocked") {
         window.clearInterval(buildPollTimer);
         buildPollTimer = null;
-        startBuildButton.disabled = false;
+        syncStartBuildAvailability();
+        startBuildButton.textContent = "自动搭建并发布";
       }
     } catch {
       window.clearInterval(buildPollTimer);
       buildPollTimer = null;
-      startBuildButton.disabled = false;
+      syncStartBuildAvailability();
+      startBuildButton.textContent = "自动搭建并发布";
       latestBuildStatus = {
         state: "failed",
         message: "状态查询失败，请稍后重试",

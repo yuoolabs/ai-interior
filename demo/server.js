@@ -3,45 +3,38 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
-const { createOrchestrator, getSystemConfig } = require("./backend");
+const { loadEnvFile, saveEnvFile } = require("./backend/utils/env-loader");
+const { createOrchestrator, getSystemConfig, getComponentSkinCatalog } = require("./backend");
 const { createDefaultAdapterConfig, applyCustomConfig, validateAdapterConfig } = require("./backend/services/page-adapter-config");
 
 const execFileAsync = promisify(execFile);
+const ENV_BOOTSTRAP = loadEnvFile({
+  cwd: __dirname,
+  fileName: process.env.APP_ENV_FILE || ".env.local",
+  override: false
+});
 const port = Number(process.env.PORT || 8001);
 const rootDir = __dirname;
 const jobs = new Map();
 let eventSequence = 0;
+const ENV_SAVE_ALLOWLIST = [
+  "MODEL_PROVIDER",
+  "MODEL_NAME",
+  "MODEL_API_KEY",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "MODEL_BASE_URL",
+  "MICROPAGE_ADAPTER_MODE",
+  "MICROPAGE_API_BASE",
+  "MICROPAGE_API_TOKEN",
+  "MICROPAGE_API_PROFILE_FILE",
+  "MICROPAGE_API_ENDPOINTS_JSON",
+  "MICROPAGE_API_HEALTH_PATH",
+  "ENABLE_REAL_AUTO_PUBLISH",
+  "AUTOPUBLISH_TENANT_ALLOWLIST"
+];
 
-const orchestrator = createOrchestrator({
-  rootDir,
-  uiFallbackRunner: async ({ run, draft, assets }) => {
-    const buildRun = {
-      pageName: draft?.execution?.page_name || `AI-${Date.now()}`,
-      pageGoal: draft?.parsed?.page_goal || "卖货转化",
-      backendUrl: draft?.execution?.runtimeSelectors?.listPage?.pageUrl || "https://smp.iyouke.com/dtmall/designPage",
-      actionTemplate: draft?.execution?.actionTemplate || [],
-      generatedAssets: assets || []
-    };
-
-    const legacyJob = {
-      id: run.id,
-      state: run.state || "running",
-      message: run.message || "准备开始",
-      currentStep: run.currentStep || "准备开始",
-      logs: run.logs || [],
-      events: run.events || [],
-      buildRun
-    };
-
-    await runBuild(legacyJob);
-
-    return {
-      channel: "ui_fallback",
-      pageId: `ui_${Date.now()}`,
-      completed: legacyJob.logs.slice(-10)
-    };
-  }
-});
+let orchestrator = createRuntimeOrchestrator();
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -55,19 +48,87 @@ const MIME_TYPES = {
   ".ico": "image/x-icon"
 };
 
+function createRuntimeOrchestrator() {
+  return createOrchestrator({
+    rootDir,
+    uiFallbackRunner: async ({ run, draft, assets }) => {
+      const buildRun = {
+        pageName: draft?.execution?.page_name || `AI-${Date.now()}`,
+        pageGoal: draft?.parsed?.page_goal || "卖货转化",
+        backendUrl: draft?.execution?.runtimeSelectors?.listPage?.pageUrl || "https://smp.iyouke.com/dtmall/designPage",
+        actionTemplate: draft?.execution?.actionTemplate || [],
+        generatedAssets: assets || []
+      };
+
+      const legacyJob = {
+        id: run.id,
+        state: run.state || "running",
+        message: run.message || "准备开始",
+        currentStep: run.currentStep || "准备开始",
+        logs: run.logs || [],
+        events: run.events || [],
+        buildRun
+      };
+
+      await runBuild(legacyJob);
+
+      return {
+        channel: "ui_fallback",
+        pageId: `ui_${Date.now()}`,
+        completed: legacyJob.logs.slice(-10)
+      };
+    }
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/v1/system/health") {
       return sendJson(res, 200, {
         status: "ok",
         time: new Date().toISOString(),
+        env: ENV_BOOTSTRAP,
         system: getSystemConfig()
       });
     }
 
     if (req.method === "GET" && req.url === "/v1/system/config") {
       return sendJson(res, 200, {
+        env: ENV_BOOTSTRAP,
         system: getSystemConfig()
+      });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/system/config/save") {
+      const body = await readJson(req);
+      const envPatch = buildEnvPatchFromConfig(body);
+
+      Object.entries(envPatch).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") {
+          delete process.env[key];
+          return;
+        }
+        process.env[key] = String(value);
+      });
+
+      const saved = saveEnvFile({
+        cwd: rootDir,
+        fileName: process.env.APP_ENV_FILE || ".env.local",
+        values: envPatch,
+        allowlist: ENV_SAVE_ALLOWLIST
+      });
+
+      orchestrator = createRuntimeOrchestrator();
+
+      return sendJson(res, 200, {
+        saved,
+        system: getSystemConfig()
+      });
+    }
+
+    if (req.method === "GET" && req.url === "/v1/system/component-skins") {
+      return sendJson(res, 200, {
+        skins: getComponentSkinCatalog({ rootDir })
       });
     }
 
@@ -80,6 +141,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/v1/system/preflight") {
       const body = await readJson(req);
       const result = await orchestrator.systemPreflight(body || {});
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/system/model/preflight") {
+      const body = await readJson(req);
+      const result = await orchestrator.systemModelPreflight(body || {});
       return sendJson(res, 200, result);
     }
 
@@ -123,6 +190,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/v1/page/execute") {
       const body = await readJson(req);
       const result = await orchestrator.executePage(body);
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && req.url === "/v1/page/auto-build") {
+      const body = await readJson(req);
+      const result = await orchestrator.autoBuild(body || {});
       return sendJson(res, 200, result);
     }
 
@@ -224,6 +297,19 @@ const server = http.createServer(async (req, res) => {
 
     return serveStatic(req, res);
   } catch (error) {
+    const message = error?.message || "服务异常";
+    if (message.startsWith("model_required_but_fallback:")) {
+      return sendJson(res, 422, {
+        message: "大模型调用未成功，且当前启用了“必须使用大模型”。请先修复模型连通性后重试。",
+        reason: message.slice("model_required_but_fallback:".length) || "model_fallback"
+      });
+    }
+    if (message.startsWith("preflight_blocked:")) {
+      return sendJson(res, 422, {
+        message: "系统预检未通过，请先修复配置后重试。",
+        reason: message.slice("preflight_blocked:".length) || "preflight_blocked"
+      });
+    }
     return sendJson(res, 500, { message: error.message || "服务异常" });
   }
 });
@@ -296,6 +382,83 @@ function resolveProfilePayload(body) {
   if (body.profile && typeof body.profile === "object") return body.profile;
   if (body.actions || body.uploadMaterial) return body;
   return {};
+}
+
+function buildEnvPatchFromConfig(body) {
+  const model = body?.model || {};
+  const adapter = body?.adapter || {};
+  const rollout = body?.rollout || {};
+  const provider = normalizeProvider(model.provider);
+  const apiKey = firstNonEmpty(model.apiKey, model.modelApiKey);
+
+  const patch = {
+    MODEL_PROVIDER: provider || undefined,
+    MODEL_NAME: cleanEnvValue(model.name),
+    MODEL_BASE_URL: cleanEnvValue(model.baseUrl),
+    MODEL_API_KEY: cleanEnvValue(apiKey),
+    MICROPAGE_ADAPTER_MODE: normalizeAdapterMode(adapter.mode),
+    MICROPAGE_API_BASE: cleanEnvValue(adapter.apiBase),
+    MICROPAGE_API_TOKEN: cleanEnvValue(adapter.apiToken),
+    MICROPAGE_API_PROFILE_FILE: cleanEnvValue(adapter.profileFile),
+    ENABLE_REAL_AUTO_PUBLISH: normalizeBooleanString(rollout.enableRealAutoPublish),
+    AUTOPUBLISH_TENANT_ALLOWLIST: normalizeCsv(rollout.tenantAllowlist)
+  };
+
+  if (provider === "gemini") {
+    patch.GEMINI_API_KEY = cleanEnvValue(apiKey);
+    patch.OPENAI_API_KEY = null;
+  } else if (provider === "openai") {
+    patch.OPENAI_API_KEY = cleanEnvValue(apiKey);
+    patch.GEMINI_API_KEY = null;
+  } else if (provider === "mock") {
+    patch.OPENAI_API_KEY = null;
+    patch.GEMINI_API_KEY = null;
+  }
+
+  return patch;
+}
+
+function normalizeProvider(value) {
+  const provider = String(value || "").trim().toLowerCase();
+  if (provider === "openai" || provider === "gemini" || provider === "mock") return provider;
+  return undefined;
+}
+
+function normalizeAdapterMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "real" || mode === "mock" || mode === "ui_only") return mode;
+  return undefined;
+}
+
+function normalizeBooleanString(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const text = String(value).trim().toLowerCase();
+  if (text === "true" || text === "1" || text === "yes" || text === "on") return "true";
+  if (text === "false" || text === "0" || text === "no" || text === "off") return "false";
+  return undefined;
+}
+
+function normalizeCsv(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean).join(",");
+  }
+  return cleanEnvValue(value);
+}
+
+function cleanEnvValue(value) {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  if (!text) return null;
+  return text;
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
 }
 
 function buildActionSteps(actionTemplate, buildRun, job) {

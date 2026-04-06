@@ -58,7 +58,7 @@ class AssetPipeline {
         componentModule: component.module,
         componentDisplayName: component.displayName,
         prompt,
-        promptSummary: `${parsed.style || "品牌感"}风格视觉，围绕${parsed.page_goal || "页面转化"}生成`,
+        promptSummary: `按组件原生样式生成，目标为${parsed.page_goal || "页面转化"}`,
         publicUrl: `/assets/generated/${fileName}`,
         localPath,
         width,
@@ -77,7 +77,9 @@ class AssetPipeline {
 
   buildPrompt({ parsed, component, referenceAnalysis }) {
     return [
-      `为微页面组件“${component.displayName}”生成主视觉图。`,
+      `为微页面组件“${component.displayName}(${component.component})”生成素材图。`,
+      "必须贴合微页面组件原生样式，禁止海报化排版和复杂装饰。",
+      "画面结构保持简洁：主图 + 简短利益点 + 行动引导，留出组件文案区域。",
       `页面目标：${parsed.page_goal || "卖货转化"}`,
       `页面风格：${parsed.style || "品牌感"}`,
       `主题色策略：${parsed.theme_color_label || "使用页面主题色"}`,
@@ -122,19 +124,29 @@ function renderGeneratedAssetSvg({ title, componentDisplayName, goal, style, dem
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${escapeXml(surface)}"/>
-      <stop offset="100%" stop-color="${escapeXml(primary)}"/>
+      <stop offset="0%" stop-color="${escapeXml(lightenHex(surface, 0.2))}"/>
+      <stop offset="100%" stop-color="${escapeXml(lightenHex(primary, 0.08))}"/>
     </linearGradient>
   </defs>
-  <rect width="${width}" height="${height}" rx="38" fill="url(#bg)"/>
-  <circle cx="${Math.round(width * 0.83)}" cy="${Math.round(height * 0.22)}" r="${Math.round(height * 0.2)}" fill="${escapeXml(secondary)}" fill-opacity="0.42"/>
-  <rect x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.12)}" width="${Math.round(width * 0.84)}" height="${Math.round(height * 0.76)}" rx="32" fill="#FFFFFF" fill-opacity="0.86"/>
-  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.24)}" fill="#5a3420" font-family="'Noto Serif SC','PingFang SC','Microsoft YaHei',serif" font-size="${Math.round(width * 0.038)}" font-weight="700">${safeComponentName}</text>
-  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.38)}" fill="#2f1f17" font-family="'Noto Serif SC','PingFang SC','Microsoft YaHei',serif" font-size="${Math.round(width * 0.072)}" font-weight="700">${safeGoal}</text>
-  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.5)}" fill="#74462b" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.026)}" font-weight="700">${safeStyle} · AI Generated Visual</text>
-  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.61)}" fill="#6d5547" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.023)}">${safeDemand}</text>
-  <text x="${Math.round(width * 0.12)}" y="${Math.round(height * 0.86)}" fill="#8b6f5d" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.018)}">${safeTitle}</text>
+  <rect width="${width}" height="${height}" rx="24" fill="url(#bg)"/>
+  <rect x="${Math.round(width * 0.05)}" y="${Math.round(height * 0.1)}" width="${Math.round(width * 0.9)}" height="${Math.round(height * 0.8)}" rx="20" fill="#ffffff" fill-opacity="0.93"/>
+  <rect x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.16)}" width="${Math.round(width * 0.84)}" height="${Math.round(height * 0.42)}" rx="16" fill="${escapeXml(lightenHex(secondary, 0.35))}"/>
+  <circle cx="${Math.round(width * 0.78)}" cy="${Math.round(height * 0.3)}" r="${Math.round(height * 0.11)}" fill="${escapeXml(lightenHex(primary, 0.45))}" fill-opacity="0.78"/>
+  <text x="${Math.round(width * 0.1)}" y="${Math.round(height * 0.66)}" fill="#2d2018" font-family="'Noto Serif SC','PingFang SC','Microsoft YaHei',serif" font-size="${Math.round(width * 0.045)}" font-weight="700">${safeGoal}</text>
+  <text x="${Math.round(width * 0.1)}" y="${Math.round(height * 0.73)}" fill="#5f4637" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.023)}">${safeStyle} · ${safeComponentName}</text>
+  <text x="${Math.round(width * 0.1)}" y="${Math.round(height * 0.8)}" fill="#745a4b" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.02)}">${safeDemand}</text>
+  <rect x="${Math.round(width * 0.1)}" y="${Math.round(height * 0.84)}" width="${Math.round(width * 0.22)}" height="${Math.round(height * 0.09)}" rx="${Math.round(height * 0.045)}" fill="${escapeXml(lightenHex(primary, 0.02))}"/>
+  <text x="${Math.round(width * 0.152)}" y="${Math.round(height * 0.897)}" fill="#fffaf3" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.02)}" font-weight="700">立即查看</text>
+  <text x="${Math.round(width * 0.66)}" y="${Math.round(height * 0.9)}" fill="#947b6a" font-family="'Manrope','PingFang SC','Microsoft YaHei',sans-serif" font-size="${Math.round(width * 0.015)}">${safeTitle}</text>
 </svg>`;
+}
+
+function lightenHex(hex, amount) {
+  const value = String(hex || "#8C4B2F").replace("#", "");
+  const full = value.length === 3 ? value.split("").map((item) => item + item).join("") : value.padEnd(6, "0");
+  const channels = full.match(/.{2}/g)?.map((item) => Number.parseInt(item, 16)) || [140, 75, 47];
+  const mixed = channels.map((channel) => Math.round(channel + (255 - channel) * amount));
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function escapeXml(value) {

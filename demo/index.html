@@ -102,7 +102,65 @@
               <button type="submit" form="briefForm" class="primary hero-primary">生成页面初稿</button>
               <button id="startBuildButton" class="secondary hero-secondary" type="button" disabled>自动搭建并发布</button>
             </div>
+            <label class="runtime-toggle">
+              <input id="requireModelToggle" type="checkbox" />
+              <span>必须使用大模型（失败不降级）</span>
+            </label>
           </form>
+
+          <section class="runtime-config" id="runtimeConfigPanel">
+            <div class="section-head compact">
+              <p class="section-index">CFG</p>
+              <div>
+                <h3>模型与执行配置</h3>
+                <p>可在页面内设置模型与适配模式，保存后会写入本地 .env.local 并即时生效。</p>
+              </div>
+            </div>
+            <form id="runtimeConfigForm" class="form-grid runtime-config-form">
+              <label class="field">
+                <span class="field-label">模型供应商</span>
+                <select id="cfgModelProvider">
+                  <option value="gemini">gemini</option>
+                  <option value="openai">openai</option>
+                  <option value="mock">mock</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field-label">模型名称</span>
+                <input id="cfgModelName" type="text" placeholder="gemini-2.5-flash / gpt-5-mini" />
+              </label>
+              <label class="field field-large">
+                <span class="field-label">模型 Base URL（可填内网代理）</span>
+                <input id="cfgModelBaseUrl" type="text" placeholder="https://generativelanguage.googleapis.com/v1beta 或你的模型网关地址" />
+              </label>
+              <label class="field field-large">
+                <span class="field-label">模型 API Key</span>
+                <input id="cfgModelApiKey" type="password" placeholder="填写后将保存为 MODEL_API_KEY（并同步到 provider 对应 key）" />
+              </label>
+              <label class="field">
+                <span class="field-label">执行模式</span>
+                <select id="cfgAdapterMode">
+                  <option value="ui_only">ui_only（推荐）</option>
+                  <option value="real">real</option>
+                  <option value="mock">mock</option>
+                </select>
+              </label>
+              <label class="field field-large">
+                <span class="field-label">微页面 API Base（real 模式必填）</span>
+                <input id="cfgApiBase" type="text" placeholder="https://your-micropage-api.example.com" />
+              </label>
+              <label class="field field-large">
+                <span class="field-label">微页面 API Token（real 模式必填）</span>
+                <input id="cfgApiToken" type="password" placeholder="MICROPAGE_API_TOKEN" />
+              </label>
+              <div class="form-actions">
+                <button id="saveRuntimeConfigButton" class="secondary hero-secondary" type="submit">保存配置</button>
+                <button id="runPreflightButton" class="secondary hero-secondary" type="button">刷新预检</button>
+              </div>
+            </form>
+            <div id="runtimeConfigStatus" class="runtime-config-status"></div>
+            <div id="runtimePreflightSummary" class="runtime-preflight-summary"></div>
+          </section>
 
           <section class="preview-dock" id="pagePreviewPanel" hidden>
             <div class="section-head compact">

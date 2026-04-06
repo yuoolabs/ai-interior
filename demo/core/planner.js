@@ -39,7 +39,7 @@ export function parseInput({ demand, industry, goal, style, themeColorMode, cust
     style: inferredStyle,
     theme_color_mode: themeColorMode || "page",
     theme_color_value: themeColorMode === "custom" ? (customThemeColor || "#8c4b2f").toUpperCase() : null,
-    theme_color_label: themeColorMode === "custom" ? `自定义颜色 ${String(customThemeColor || "#8c4b2f").toUpperCase()}` : "使用页面主题色",
+    theme_color_label: themeColorMode === "custom" ? `自定义颜色 ${String(customThemeColor || "#8c4b2f").toUpperCase()}` : "使用小程序主题色",
     reference_image: referenceFile?.name || null,
     reference_analysis: referenceAnalysis || null,
     modules,

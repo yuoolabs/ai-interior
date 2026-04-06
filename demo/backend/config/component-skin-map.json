@@ -1,0 +1,75 @@
+{
+  "version": "v1",
+  "components": {
+    "banner": {
+      "name": "图文广告",
+      "screenshot": "/assets/component-skins/banner.png",
+      "fit": "cover",
+      "notes": "建议截图包含标题区、主图区、按钮区",
+      "slots": ["images", "title", "link"]
+    },
+    "coupon": {
+      "name": "优惠券",
+      "screenshot": "/assets/component-skins/coupon.png",
+      "fit": "cover",
+      "notes": "建议截图包含券面样式和按钮态",
+      "slots": ["couponIds", "title"]
+    },
+    "product": {
+      "name": "商品",
+      "screenshot": "/assets/component-skins/product.png",
+      "fit": "cover",
+      "notes": "建议截图包含商品卡片、价格和标签",
+      "slots": ["title", "productIds", "layout"]
+    },
+    "search": {
+      "name": "搜索框",
+      "screenshot": "/assets/component-skins/search.png",
+      "fit": "cover",
+      "notes": "建议截图包含输入框默认态",
+      "slots": ["placeholder", "link"]
+    },
+    "linkNav": {
+      "name": "链接导航",
+      "screenshot": "/assets/component-skins/linkNav.png",
+      "fit": "cover",
+      "notes": "建议截图包含导航图标与标题",
+      "slots": ["title", "links"]
+    },
+    "title": {
+      "name": "标题文字",
+      "screenshot": "/assets/component-skins/title.png",
+      "fit": "cover",
+      "notes": "建议截图包含标题与副文案层级",
+      "slots": ["title", "content"]
+    },
+    "limit": {
+      "name": "限时优惠",
+      "screenshot": "/assets/component-skins/limit.png",
+      "fit": "cover",
+      "notes": "建议截图包含倒计时区域",
+      "slots": ["activityId", "title"]
+    },
+    "handleMember": {
+      "name": "办理会员",
+      "screenshot": "/assets/component-skins/handleMember.png",
+      "fit": "cover",
+      "notes": "建议截图包含表单和 CTA",
+      "slots": ["memberCardId", "title"]
+    },
+    "bookEvent": {
+      "name": "预约事件",
+      "screenshot": "/assets/component-skins/bookEvent.png",
+      "fit": "cover",
+      "notes": "建议截图包含活动信息和报名按钮",
+      "slots": ["eventId", "title"]
+    },
+    "videoChannel": {
+      "name": "视频号直播",
+      "screenshot": "/assets/component-skins/videoChannel.png",
+      "fit": "cover",
+      "notes": "建议截图包含直播卡片列表",
+      "slots": ["liveRoomId", "title"]
+    }
+  }
+}

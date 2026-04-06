@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
+    "start:mock": "MICROPAGE_ADAPTER_MODE=mock node server.js",
+    "start:ui": "MICROPAGE_ADAPTER_MODE=ui_only node server.js",
+    "start:real": "MICROPAGE_ADAPTER_MODE=real node server.js",
     "test": "node --test --test-concurrency=1 backend/tests/*.test.js",
-    "preflight": "node scripts/preflight.js"
+    "preflight": "node scripts/preflight.js",
+    "skins:check": "node scripts/check-component-skins.js"
   }
 }
