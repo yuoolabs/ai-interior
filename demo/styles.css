@@ -37,6 +37,10 @@ body {
     linear-gradient(180deg, oklch(0.985 0.008 84) 0%, var(--paper) 100%);
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 body::before {
   content: "";
   position: fixed;
@@ -92,6 +96,7 @@ body::before {
   display: grid;
   gap: 8px;
   padding: clamp(14px, 2vw, 20px);
+  padding-right: clamp(170px, 15vw, 240px);
   border: 1px solid color-mix(in oklab, var(--line-strong) 50%, white);
   border-radius: var(--radius-xl);
   background:
@@ -140,10 +145,13 @@ body::before {
 }
 
 .hero-actions {
-  display: flex;
-  flex-wrap: wrap;
+  position: absolute;
+  right: clamp(16px, 2vw, 24px);
+  top: clamp(24px, 3vw, 40px);
+  display: inline-flex;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: 0;
+  z-index: 2;
 }
 
 .form-actions {
@@ -376,6 +384,59 @@ select:focus,
 
 .runtime-preflight-list .bad {
   color: #b42318;
+}
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+}
+
+.settings-modal[hidden] {
+  display: none !important;
+}
+
+.settings-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(35, 24, 16, 0.45);
+  backdrop-filter: blur(3px);
+}
+
+.settings-modal-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(860px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.settings-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.settings-modal-close {
+  appearance: none;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--paper-strong) 82%, white);
+  color: var(--ink-soft);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-modal-close:hover {
+  background: color-mix(in oklab, var(--accent-soft) 56%, white);
 }
 
 .file-input {
@@ -1559,8 +1620,16 @@ pre {
     border-radius: 22px;
   }
 
+  .hero-copy {
+    padding-right: clamp(14px, 2vw, 20px);
+  }
+
   .hero-actions {
+    position: static;
+    right: auto;
+    top: auto;
     flex-direction: column;
+    margin-top: 8px;
   }
 
   .form-actions {
@@ -1587,5 +1656,15 @@ pre {
 
   .section-index {
     min-width: 38px;
+  }
+
+  .settings-modal {
+    padding: 12px;
+    align-items: end;
+  }
+
+  .settings-modal-dialog {
+    width: min(100vw - 8px, 860px);
+    max-height: calc(100vh - 16px);
   }
 }

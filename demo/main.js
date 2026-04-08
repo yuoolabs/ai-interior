@@ -10,6 +10,9 @@ const customThemeColorValue = document.getElementById("customThemeColorValue");
 const referenceInput = document.getElementById("reference");
 const referenceFileName = document.getElementById("referenceFileName");
 const requireModelToggle = document.getElementById("requireModelToggle");
+const openModelSettingsButton = document.getElementById("openModelSettingsButton");
+const closeModelSettingsButton = document.getElementById("closeModelSettingsButton");
+const modelSettingsModal = document.getElementById("modelSettingsModal");
 
 const aiPanel = document.getElementById("aiPanel");
 const aiFeed = document.getElementById("aiFeed");
@@ -58,6 +61,7 @@ let buildPollTimer = null;
 let componentSkinCatalog = null;
 let latestSystemConfig = null;
 let latestPreflight = null;
+let modelSettingsReturnFocus = null;
 
 themeColorModeInputs.forEach((input) => {
   input.addEventListener("change", syncThemeColorMode);
@@ -83,6 +87,7 @@ loadComponentSkinCatalog();
 loadSystemConfig().then(() => runPreflightCheck({ strict: true, silent: true }));
 syncStartBuildAvailability();
 restoreRequireModelPreference();
+bindModelSettingsModalEvents();
 
 if (runtimeConfigForm) {
   runtimeConfigForm.addEventListener("submit", saveRuntimeConfig);
@@ -721,6 +726,53 @@ function renderRuntimeDiagnostics() {
     ${uiOnlyHint ? `<p class="runtime-preflight-text">${escapeHtml(uiOnlyHint)}</p>` : ""}
     <ul class="runtime-preflight-list">${checkHtml}</ul>
   `;
+}
+
+function bindModelSettingsModalEvents() {
+  if (!modelSettingsModal) return;
+
+  if (openModelSettingsButton) {
+    openModelSettingsButton.addEventListener("click", openModelSettingsModal);
+  }
+
+  if (closeModelSettingsButton) {
+    closeModelSettingsButton.addEventListener("click", closeModelSettingsModal);
+  }
+
+  modelSettingsModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-close-model-settings='true']")) {
+      closeModelSettingsModal();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (modelSettingsModal.hidden) return;
+    closeModelSettingsModal();
+  });
+}
+
+function openModelSettingsModal() {
+  if (!modelSettingsModal) return;
+  modelSettingsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modelSettingsModal.hidden = false;
+  document.body.classList.add("modal-open");
+  window.requestAnimationFrame(() => {
+    if (closeModelSettingsButton) closeModelSettingsButton.focus();
+  });
+}
+
+function closeModelSettingsModal() {
+  if (!modelSettingsModal) return;
+  modelSettingsModal.hidden = true;
+  document.body.classList.remove("modal-open");
+  if (modelSettingsReturnFocus && document.contains(modelSettingsReturnFocus)) {
+    modelSettingsReturnFocus.focus();
+  } else if (openModelSettingsButton) {
+    openModelSettingsButton.focus();
+  }
 }
 
 async function ensureRuntimeModeReadyForBuild() {
